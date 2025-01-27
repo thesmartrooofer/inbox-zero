@@ -1,0 +1,59 @@
+[build]
+dockerfilePath = "docker/Dockerfile.web"
+builder = "DOCKERFILE"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+
+[plugins]
+postgresql = true
+redis = true
+
+# Auto-configured variables
+[variables]
+NEXTAUTH_URL = "${RAILWAY_STATIC_URL}"
+NEXT_PUBLIC_APP_URL = "${RAILWAY_STATIC_URL}"
+DATABASE_URL = "${{Postgres.DATABASE_URL}}"
+DIRECT_URL = "${{Postgres.DATABASE_URL}}"
+REDIS_URL = "${{Redis.URL}}"
+
+# Required variables that Railway will prompt for
+[variables.NEXTAUTH_SECRET]
+required = true
+description = "Secret key for NextAuth (generate with: openssl rand -hex 32)"
+
+[variables.OPENAI_API_KEY]
+required = true
+description = "Your OpenAI API key"
+
+[variables.GOOGLE_CLIENT_ID]
+required = true
+description = "Google OAuth Client ID from Google Cloud Console"
+
+[variables.GOOGLE_CLIENT_SECRET]
+required = true
+description = "Google OAuth Client Secret from Google Cloud Console"
+
+[variables.TINYBIRD_TOKEN]
+required = true
+description = "Admin token from your Tinybird workspace (us-east4 region)"
+
+[variables.GOOGLE_PUBSUB_TOPIC_NAME]
+required = true
+description = "Google PubSub topic name for real-time email handling"
+
+[variables.GOOGLE_PUBSUB_VERIFICATION_TOKEN]
+required = true
+description = "Verification token for Google PubSub webhook (can be any random string)"
+
+[variables.UPSTASH_REDIS_TOKEN]
+required = true
+description = "Token for Redis authentication"
+
+# Optional configurations
+[variables.NEXT_PUBLIC_DISABLE_TINYBIRD]
+required = false
+default = "false"
+description = "Set to true to disable Tinybird features"
