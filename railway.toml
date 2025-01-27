@@ -4,7 +4,7 @@ builder = "DOCKERFILE"
 
 [deploy]
 healthcheckPath = "/"
-healthcheckTimeout = 100
+healthcheckTimeout = 30  # Reduced from 100
 restartPolicyType = "on_failure"
 
 [plugins]
@@ -18,8 +18,9 @@ NEXT_PUBLIC_APP_URL = "${RAILWAY_STATIC_URL}"
 DATABASE_URL = "${{Postgres.DATABASE_URL}}"
 DIRECT_URL = "${{Postgres.DATABASE_URL}}"
 REDIS_URL = "${{Redis.URL}}"
+NODE_ENV = "production"
 
-# Required variables that Railway will prompt for
+# Required variables
 [variables.NEXTAUTH_SECRET]
 required = true
 description = "Secret key for NextAuth (generate with: openssl rand -hex 32)"
@@ -48,12 +49,13 @@ description = "Google PubSub topic name for real-time email handling"
 required = true
 description = "Verification token for Google PubSub webhook (can be any random string)"
 
-[variables.UPSTASH_REDIS_TOKEN]
-required = true
-description = "Token for Redis authentication"
-
 # Optional configurations
 [variables.NEXT_PUBLIC_DISABLE_TINYBIRD]
 required = false
 default = "false"
 description = "Set to true to disable Tinybird features"
+
+[variables.NEXT_TELEMETRY_DISABLED]
+required = false
+default = "1"
+description = "Disable Next.js telemetry"
