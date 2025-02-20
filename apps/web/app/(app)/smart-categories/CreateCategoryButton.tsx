@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { type SubmitHandler, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PlusIcon } from "lucide-react";
-import { useModal } from "@/components/Modal";
+import { useModal } from "@/hooks/useModal";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { Input } from "@/components/Input";
 import { toastSuccess, toastError } from "@/components/Toast";
@@ -201,7 +201,7 @@ function CreateCategoryForm({
         error={errors.description}
       />
 
-      <div className="rounded border border-gray-200 bg-gray-50 p-3">
+      <div className="rounded border border-border bg-muted/50 p-3">
         <div className="text-xs font-medium">Examples</div>
         <div className="mt-1 flex flex-wrap gap-2">
           {EXAMPLE_CATEGORIES.map((category) => (

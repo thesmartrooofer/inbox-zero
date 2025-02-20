@@ -57,7 +57,7 @@ import { GroupItemDisplay } from "@/app/(app)/automation/group/ViewGroup";
 import { cn } from "@/utils";
 import { useCategories } from "@/hooks/useCategories";
 import { CategorySelect } from "@/components/CategorySelect";
-import { useModal } from "@/components/Modal";
+import { useModal } from "@/hooks/useModal";
 
 type ReportMistakeView = "select-expected-rule" | "ai-fix" | "manual-fix";
 
@@ -932,7 +932,7 @@ function Instructions({
   return (
     <div>
       <p className="text-sm">{label}</p>
-      <div className="mt-2 rounded border border-gray-200 bg-gray-50 p-2 text-sm">
+      <div className="mt-2 rounded border border-border bg-muted p-2 text-sm">
         {instructions}
       </div>
     </div>

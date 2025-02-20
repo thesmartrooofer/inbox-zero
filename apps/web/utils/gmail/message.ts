@@ -9,6 +9,9 @@ import {
 } from "@/utils/types";
 import { getBatch } from "@/utils/gmail/batch";
 import { extractDomainFromEmail } from "@/utils/email";
+import { createScopedLogger } from "@/utils/logger";
+
+const logger = createScopedLogger("gmail/message");
 
 export async function getMessage(
   messageId: string,
@@ -40,7 +43,7 @@ export async function getMessageByRfc822Id(
 
   const message = response.data.messages?.[0];
   if (!message?.id) {
-    console.error("No message found for RFC822 Message-ID", {
+    logger.error("No message found for RFC822 Message-ID", {
       rfc822MessageId,
     });
     return null;
@@ -66,9 +69,10 @@ export async function getMessagesBatch(
       if (isBatchError(message)) {
         // TODO need a better way to handle this
         // https://claude.ai/chat/3984ad45-f5d4-4196-8309-9b5dc9211d05
-        console.error(
-          `Error fetching message ${message.error.code} ${message.error.message}`,
-        );
+        logger.error("Error fetching message", {
+          code: message.error.code,
+          error: message.error,
+        });
         return;
       }
 
@@ -97,14 +101,15 @@ async function findPreviousEmailsBySender(
 
 export async function hasPreviousEmailsFromSender(
   gmail: gmail_v1.Gmail,
-  options: { from: string; date: string; threadId: string },
+  options: { from: string; date: Date; messageId: string },
 ) {
   const previousEmails = await findPreviousEmailsBySender(gmail, {
     sender: options.from,
     dateInSeconds: +new Date(options.date) / 1000,
   });
+  // Ignore the current email
   const hasPreviousEmail = !!previousEmails?.find(
-    (p) => p.threadId !== options.threadId,
+    (p) => p.id !== options.messageId,
   );
 
   return hasPreviousEmail;
@@ -128,7 +133,7 @@ const PUBLIC_DOMAINS = new Set([
 
 export async function hasPreviousEmailsFromSenderOrDomain(
   gmail: gmail_v1.Gmail,
-  options: { from: string; date: string; threadId: string },
+  options: { from: string; date: Date; messageId: string },
 ) {
   const domain = extractDomainFromEmail(options.from);
   if (!domain) return hasPreviousEmailsFromSender(gmail, options);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useForm } from "react-hook-form";
-import { Button } from "@/components/Button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/Input";
 import { saveAboutAction, type SaveAboutBody } from "@/utils/actions/user";
 import {
@@ -12,12 +12,12 @@ import {
 } from "@/components/Form";
 import { handleActionResult } from "@/utils/server-action";
 
-export const AboutSectionForm = (props: { about?: string }) => {
+export const AboutSectionForm = ({ about }: { about: string | null }) => {
   const {
     register,
     formState: { errors, isSubmitting },
   } = useForm<SaveAboutBody>({
-    defaultValues: { about: props.about },
+    defaultValues: { about: about ?? "" },
   });
 
   return (
@@ -51,7 +51,7 @@ export const AboutSectionForm = (props: { about?: string }) => {
             </div>
           </FormSectionRight>
           <SubmitButtonWrapper>
-            <Button type="submit" size="lg" loading={isSubmitting}>
+            <Button type="submit" loading={isSubmitting}>
               Save
             </Button>
           </SubmitButtonWrapper>

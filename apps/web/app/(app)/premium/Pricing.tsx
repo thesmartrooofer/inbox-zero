@@ -12,9 +12,8 @@ import clsx from "clsx";
 import { env } from "@/env";
 import { LoadingContent } from "@/components/LoadingContent";
 import { usePremium } from "@/components/PremiumAlert";
-import { Button } from "@/components/Button";
-import { Button as ShadcnButton } from "@/components/ui/button";
-import { getUserTier, isPremiumExpired } from "@/utils/premium";
+import { Button } from "@/components/ui/button";
+import { getUserTier } from "@/utils/premium";
 import {
   frequencies,
   pricingAdditonalEmail,
@@ -26,6 +25,7 @@ import { usePricingVariant } from "@/hooks/useFeatureFlags";
 import { PremiumTier } from "@prisma/client";
 import { switchPremiumPlanAction } from "@/utils/actions/premium";
 import { isActionError } from "@/utils/error";
+import { TooltipExplanation } from "@/components/TooltipExplanation";
 
 function attachUserInfo(
   url: string,
@@ -57,7 +57,6 @@ export function Pricing(props: { header?: React.ReactNode }) {
 
   const affiliateCode = useAffiliateCode();
   const premiumTier = getUserTier(data?.premium);
-  const isExpired = isPremiumExpired(data?.premium);
 
   const header = props.header || (
     <div className="mb-12">
@@ -106,24 +105,27 @@ export function Pricing(props: { header?: React.ReactNode }) {
 
         {isPremium && (
           <div className="mb-8 mt-8 text-center">
-            <Button
-              link={{
-                href: `https://${env.NEXT_PUBLIC_LEMON_STORE_ID}.lemonsqueezy.com/billing`,
-                target: "_blank",
-              }}
-            >
-              <CreditCardIcon className="mr-2 h-4 w-4" />
-              Manage subscription
+            <Button asChild>
+              <Link
+                href={`https://${env.NEXT_PUBLIC_LEMON_STORE_ID}.lemonsqueezy.com/billing`}
+                target="_blank"
+              >
+                <CreditCardIcon className="mr-2 h-4 w-4" />
+                Manage subscription
+              </Link>
             </Button>
 
-            <Button link={{ href: "/automation" }} color="blue">
-              <SparklesIcon className="mr-2 h-4 w-4" />
-              Use Inbox Zero
+            <Button variant="primaryBlue" className="ml-2" asChild>
+              <Link href={env.NEXT_PUBLIC_APP_HOME_PATH}>
+                <SparklesIcon className="mr-2 h-4 w-4" />
+                Use Inbox Zero
+              </Link>
             </Button>
 
             {premiumTier && (
               <div className="mx-auto mt-4 max-w-md">
                 <AlertWithButton
+                  className="bg-background"
                   variant="blue"
                   title="Add extra users to your account!"
                   description={`You can upgrade extra accounts to ${capitalCase(
@@ -134,9 +136,9 @@ export function Pricing(props: { header?: React.ReactNode }) {
                   icon={null}
                   button={
                     <div className="ml-4 whitespace-nowrap">
-                      <ShadcnButton asChild variant="blue">
+                      <Button variant="primaryBlue" asChild>
                         <Link href="/settings#manage-users">Add users</Link>
-                      </ShadcnButton>
+                      </Button>
                     </div>
                   }
                 />
@@ -169,14 +171,13 @@ export function Pricing(props: { header?: React.ReactNode }) {
           </RadioGroup>
 
           <div className="ml-1">
-            <Badge>Save 50%!</Badge>
+            <Badge>Save up to 50%!</Badge>
           </div>
         </div>
 
         <Layout className="isolate mx-auto mt-10 grid max-w-md grid-cols-1 gap-y-8">
           {tiers.map((tier, tierIdx) => {
-            const isCurrentPlan =
-              !isExpired && tier.tiers[frequency.value] === premiumTier;
+            const isCurrentPlan = tier.tiers[frequency.value] === premiumTier;
 
             const user = session.data?.user;
 
@@ -198,6 +199,12 @@ export function Pricing(props: { header?: React.ReactNode }) {
             }
 
             const href = getHref();
+
+            function getCTAText() {
+              if (isCurrentPlan) return "Current plan";
+              if (premiumTier) return "Switch to this plan";
+              return tier.cta;
+            }
 
             return (
               <Item
@@ -247,12 +254,17 @@ export function Pricing(props: { header?: React.ReactNode }) {
                   )}
                   <ul className="mt-8 space-y-3 text-sm leading-6 text-gray-600">
                     {tier.features.map((feature) => (
-                      <li key={feature} className="flex gap-x-3">
+                      <li key={feature.text} className="flex gap-x-3">
                         <CheckIcon
                           className="h-6 w-5 flex-none text-blue-600"
                           aria-hidden="true"
                         />
-                        {feature}
+                        <span className="flex items-center gap-2">
+                          {feature.text}
+                          {feature.tooltip && (
+                            <TooltipExplanation text={feature.tooltip} />
+                          )}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -292,11 +304,7 @@ export function Pricing(props: { header?: React.ReactNode }) {
                     "mt-8 block rounded-md px-3 py-2 text-center text-sm font-semibold leading-6 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600",
                   )}
                 >
-                  {isCurrentPlan
-                    ? "Current plan"
-                    : premiumTier
-                      ? "Switch to this plan"
-                      : tier.cta}
+                  {getCTAText()}
                 </a>
               </Item>
             );

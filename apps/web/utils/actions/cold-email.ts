@@ -12,12 +12,12 @@ import { getThreads } from "@/utils/gmail/thread";
 import { inboxZeroLabels } from "@/utils/label";
 import { withActionInstrumentation } from "@/utils/actions/middleware";
 import { emailToContent } from "@/utils/mail";
-import { hasPreviousEmailsFromSenderOrDomain } from "@/utils/gmail/message";
 import { isColdEmail } from "@/utils/cold-email/is-cold-email";
 import {
   coldEmailBlockerBody,
   type ColdEmailBlockerBody,
 } from "@/utils/actions/validation";
+import { formatZodError } from "@/utils/error";
 
 const markNotColdEmailBody = z.object({ sender: z.string() });
 
@@ -87,7 +87,7 @@ export const testColdEmailAction = withActionInstrumentation(
     const gmail = getGmailClient(session);
 
     const { data, error } = coldEmailBlockerBody.safeParse(unsafeBody);
-    if (error) return { error: error.message };
+    if (error) return { error: formatZodError(error) };
 
     const result = await checkColdEmail(data, gmail, session.user.email);
 
@@ -112,15 +112,6 @@ async function checkColdEmail(
     },
   });
 
-  const hasPreviousEmail =
-    body.date && body.threadId
-      ? await hasPreviousEmailsFromSenderOrDomain(gmail, {
-          from: body.from,
-          date: body.date,
-          threadId: body.threadId,
-        })
-      : false;
-
   const content = emailToContent({
     textHtml: body.textHtml || undefined,
     textPlain: body.textPlain || undefined,
@@ -132,9 +123,12 @@ async function checkColdEmail(
       from: body.from,
       subject: body.subject,
       content,
+      date: body.date ? new Date(body.date) : undefined,
+      threadId: body.threadId || undefined,
+      messageId: body.messageId,
     },
     user,
-    hasPreviousEmail,
+    gmail,
   });
 
   return response;

@@ -1,9 +1,5 @@
 import type { gmail_v1 } from "@googleapis/gmail";
-import {
-  isDefined,
-  type MessageWithPayload,
-  type ParsedMessage,
-} from "@/utils/types";
+import { isDefined, type ParsedMessage } from "@/utils/types";
 import { createScopedLogger } from "@/utils/logger";
 import { getMessageByRfc822Id } from "@/utils/gmail/message";
 import { processUserRequest } from "@/utils/ai/assistant/process-user-request";
@@ -11,13 +7,10 @@ import { extractEmailAddress } from "@/utils/email";
 import prisma from "@/utils/prisma";
 import { emailToContent, parseMessage } from "@/utils/mail";
 import { replyToEmail } from "@/utils/gmail/mail";
-import { getThread } from "@/utils/gmail/thread";
+import { getThreadMessages } from "@/utils/gmail/thread";
 import { isAssistantEmail } from "@/utils/assistant/is-assistant-email";
-import {
-  getOrCreateInboxZeroLabel,
-  GmailLabel,
-  labelMessage,
-} from "@/utils/gmail/label";
+import { getOrCreateInboxZeroLabel, labelMessage } from "@/utils/gmail/label";
+import { internalDateToDate } from "@/utils/date";
 
 const logger = createScopedLogger("process-assistant-email");
 
@@ -59,27 +52,22 @@ async function processAssistantEmailInternal({
     throw new Error("Unauthorized assistant access attempt");
   }
 
-  logger.info("Processing assistant email", {
+  const loggerOptions = {
     email: userEmail,
     threadId: message.threadId,
     messageId: message.id,
-  });
+  };
+
+  logger.info("Processing assistant email", loggerOptions);
 
   // 1. get thread
   // 2. get first message in thread to the personal assistant
   // 3. get the referenced message from that message
 
-  const thread = await getThread(message.threadId, gmail);
-  const threadMessages = thread?.messages
-    ?.map((m) => parseMessage(m as MessageWithPayload))
-    .filter((m) => !m.labelIds?.includes(GmailLabel.DRAFT));
+  const threadMessages = await getThreadMessages(message.threadId, gmail);
 
   if (!threadMessages?.length) {
-    logger.error("No thread messages found", {
-      email: userEmail,
-      threadId: message.threadId,
-      messageId: message.id,
-    });
+    logger.error("No thread messages found", loggerOptions);
     await replyToEmail(
       gmail,
       message,
@@ -178,16 +166,18 @@ async function processAssistantEmailInternal({
   ]);
 
   if (!user) {
-    logger.error("User not found", { userEmail });
+    logger.error("User not found", loggerOptions);
     return;
   }
 
-  const firstMessageToAssistantDate = new Date(
-    firstMessageToAssistant.headers.date,
+  const firstMessageToAssistantDate = internalDateToDate(
+    firstMessageToAssistant.internalDate,
   );
 
   const messages = threadMessages
-    .filter((m) => new Date(m.headers.date) >= firstMessageToAssistantDate)
+    .filter(
+      (m) => internalDateToDate(m.internalDate) >= firstMessageToAssistantDate,
+    )
     .map((m) => {
       const isAssistant = isAssistantEmail({
         userEmail,
@@ -212,6 +202,11 @@ async function processAssistantEmailInternal({
         content,
       } as const;
     });
+
+  if (messages[messages.length - 1].role === "assistant") {
+    logger.error("Assistant message cannot be last", loggerOptions);
+    return;
+  }
 
   const result = await processUserRequest({
     user,
@@ -275,6 +270,20 @@ async function withProcessingLabels<T>(
       key: "assistant",
     }),
   ]);
+
+  const [processingLabelResult, assistantLabelResult] = results;
+
+  if (processingLabelResult.status === "rejected") {
+    logger.error("Error getting processing label", {
+      error: processingLabelResult.reason,
+    });
+  }
+
+  if (assistantLabelResult.status === "rejected") {
+    logger.error("Error getting assistant label", {
+      error: assistantLabelResult.reason,
+    });
+  }
 
   const labels = results
     .map((result) =>

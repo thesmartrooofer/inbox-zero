@@ -45,7 +45,10 @@ export function TestRulesContent() {
         <TestRulesForm />
 
         <div className="mt-4 max-w-sm">
-          <SearchForm onSearch={setSearchQuery} />
+          <SearchForm
+            defaultQuery={searchQuery || undefined}
+            onSearch={setSearchQuery}
+          />
         </div>
       </CardContent>
 
@@ -59,7 +62,7 @@ export function TestRulesContent() {
                 <TestRulesContentRow
                   key={message.id}
                   message={message}
-                  userEmail={email!}
+                  userEmail={email || ""}
                 />
               );
             })}
@@ -95,6 +98,8 @@ const TestRulesForm = () => {
         textPlain: data.message,
         snippet: null,
         threadId: null,
+        messageId: null,
+        date: undefined,
       });
     },
     [testEmail],
@@ -127,12 +132,13 @@ const TestRulesForm = () => {
   );
 };
 
-function TestRulesContentRow(props: {
+function TestRulesContentRow({
+  message,
+  userEmail,
+}: {
   message: MessagesResponse["messages"][number];
   userEmail: string;
 }) {
-  const { message } = props;
-
   const { testing, response, testEmail } = useColdEmailTest();
 
   return (
@@ -144,10 +150,10 @@ function TestRulesContentRow(props: {
       <TableCell>
         <div className="flex items-center justify-between">
           <EmailMessageCell
-            from={message.headers.from}
+            sender={message.headers.from}
             subject={message.headers.subject}
             snippet={message.snippet}
-            userEmail={props.userEmail}
+            userEmail={userEmail}
             threadId={message.threadId}
             messageId={message.id}
           />
@@ -156,6 +162,10 @@ function TestRulesContentRow(props: {
               color="white"
               loading={testing}
               onClick={async () => {
+                console.log(
+                  "🚀 ~ onClick={ ~ message.internalDate:",
+                  message.internalDate,
+                );
                 await testEmail({
                   from: message.headers.from,
                   subject: message.headers.subject,
@@ -163,6 +173,8 @@ function TestRulesContentRow(props: {
                   textPlain: message.textPlain || null,
                   snippet: message.snippet || null,
                   threadId: message.threadId,
+                  messageId: message.id,
+                  date: message.internalDate || undefined,
                 });
               }}
             >

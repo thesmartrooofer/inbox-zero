@@ -3,57 +3,23 @@ import {
   draftEmail,
   forwardEmail,
   replyToEmail,
-  sendEmail,
+  sendEmailWithPlainText,
 } from "@/utils/gmail/mail";
-import {
-  ActionType,
-  type ExecutedRule,
-  type ExecutedAction,
-} from "@prisma/client";
-import type { ParsedMessage, PartialRecord } from "@/utils/types";
+import { ActionType, type ExecutedRule } from "@prisma/client";
 import {
   archiveThread,
   getOrCreateLabel,
   labelThread,
+  markReadThread,
 } from "@/utils/gmail/label";
 import { markSpam } from "@/utils/gmail/spam";
 import type { Attachment } from "@/utils/types/mail";
 import { createScopedLogger } from "@/utils/logger";
 import { callWebhook } from "@/utils/webhook";
+import type { Properties } from "@/utils/ai/types";
+import type { ActionItem, EmailForAction } from "@/utils/ai/types";
 
 const logger = createScopedLogger("ai-actions");
-
-// export type EmailForAction = {
-//   threadId: string;
-//   messageId: string;
-//   references?: string;
-//   headerMessageId: string;
-//   subject: string;
-//   from: string;
-//   cc?: string;
-//   bcc?: string;
-//   replyTo?: string;
-//   date: string;
-//   textPlain: string;
-//   textHtml?: string;
-// };
-
-export type EmailForAction = Pick<
-  ParsedMessage,
-  "threadId" | "id" | "headers" | "textPlain" | "textHtml" | "attachments"
->;
-
-export type ActionItem = {
-  id: ExecutedAction["id"];
-  type: ExecutedAction["type"];
-  label?: ExecutedAction["label"];
-  subject?: ExecutedAction["subject"];
-  content?: ExecutedAction["content"];
-  to?: ExecutedAction["to"];
-  cc?: ExecutedAction["cc"];
-  bcc?: ExecutedAction["bcc"];
-  url?: ExecutedAction["url"];
-};
 
 type ActionFunction<T extends Omit<ActionItem, "type" | "id">> = (
   gmail: gmail_v1.Gmail,
@@ -62,14 +28,6 @@ type ActionFunction<T extends Omit<ActionItem, "type" | "id">> = (
   userEmail: string,
   executedRule: ExecutedRule,
 ) => Promise<any>;
-
-export type Properties = PartialRecord<
-  "from" | "to" | "cc" | "bcc" | "subject" | "content" | "label" | "url",
-  {
-    type: string;
-    description: string;
-  }
->;
 
 type ActionFunctionDef = {
   name: string;
@@ -261,6 +219,17 @@ const CALL_WEBHOOK: ActionFunctionDef = {
   action: ActionType.CALL_WEBHOOK,
 };
 
+const MARK_READ: ActionFunctionDef = {
+  name: "mark_read",
+  description: "Mark as read.",
+  parameters: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
+  action: ActionType.MARK_READ,
+};
+
 export const actionFunctionDefs: Record<ActionType, ActionFunctionDef> = {
   [ActionType.ARCHIVE]: ARCHIVE,
   [ActionType.LABEL]: LABEL,
@@ -270,6 +239,7 @@ export const actionFunctionDefs: Record<ActionType, ActionFunctionDef> = {
   [ActionType.FORWARD]: FORWARD_EMAIL,
   [ActionType.MARK_SPAM]: MARK_SPAM,
   [ActionType.CALL_WEBHOOK]: CALL_WEBHOOK,
+  [ActionType.MARK_READ]: MARK_READ,
 };
 
 const archive: ActionFunction<Record<string, unknown>> = async (
@@ -317,19 +287,7 @@ const draft: ActionFunction<any> = async (
     attachments?: Attachment[];
   },
 ) => {
-  await draftEmail(gmail, {
-    replyToEmail: {
-      threadId: email.threadId,
-      references: email.headers.references,
-      headerMessageId: email.headers["message-id"] || "",
-    },
-    to: args.to || email.headers["reply-to"] || email.headers.from,
-    cc: email.headers.cc,
-    bcc: email.headers.bcc,
-    subject: email.headers.subject,
-    messageText: args.content,
-    attachments: args.attachments,
-  });
+  await draftEmail(gmail, email, args);
 };
 
 const send_email: ActionFunction<any> = async (
@@ -344,7 +302,7 @@ const send_email: ActionFunction<any> = async (
     attachments?: Attachment[];
   },
 ) => {
-  await sendEmail(gmail, {
+  await sendEmailWithPlainText(gmail, {
     to: args.to,
     cc: args.cc,
     bcc: args.bcc,
@@ -421,6 +379,13 @@ const call_webhook: ActionFunction<any> = async (
   });
 };
 
+const mark_read: ActionFunction<any> = async (
+  gmail: gmail_v1.Gmail,
+  email: EmailForAction,
+) => {
+  return await markReadThread({ gmail, threadId: email.threadId, read: true });
+};
+
 export const runActionFunction = async (
   gmail: gmail_v1.Gmail,
   email: EmailForAction,
@@ -453,6 +418,8 @@ export const runActionFunction = async (
       return mark_spam(gmail, email, args, userEmail, executedRule);
     case ActionType.CALL_WEBHOOK:
       return call_webhook(gmail, email, args, userEmail, executedRule);
+    case ActionType.MARK_READ:
+      return mark_read(gmail, email, args, userEmail, executedRule);
     default:
       throw new Error(`Unknown action: ${action}`);
   }

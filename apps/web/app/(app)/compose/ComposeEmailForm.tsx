@@ -1,5 +1,6 @@
 "use client";
 
+import { useHotkeys } from "react-hotkeys-hook";
 import {
   Combobox,
   ComboboxInput,
@@ -7,27 +8,10 @@ import {
   ComboboxOptions,
 } from "@headlessui/react";
 import { CheckCircleIcon, TrashIcon, XIcon } from "lucide-react";
-import {
-  EditorBubble,
-  EditorCommand,
-  EditorCommandEmpty,
-  EditorCommandItem,
-  EditorContent,
-  EditorRoot,
-} from "novel";
-import { handleCommandNavigation } from "novel/extensions";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef } from "react";
 import { type SubmitHandler, useForm } from "react-hook-form";
 import useSWR from "swr";
 import { z } from "zod";
-
-import { defaultExtensions } from "@/app/(app)/compose/extensions";
-import { ColorSelector } from "@/app/(app)/compose/selectors/color-selector";
-import { LinkSelector } from "@/app/(app)/compose/selectors/link-selector";
-import { NodeSelector } from "@/app/(app)/compose/selectors/node-selector";
-// import { AISelector } from "@/app/(app)/compose/selectors/ai-selector";
-import { TextButtons } from "@/app/(app)/compose/selectors/text-buttons";
-import type { ContactsResponse } from "@/app/api/google/contacts/route";
 import { Input, Label } from "@/components/Input";
 import { toastError, toastSuccess } from "@/components/Toast";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -35,17 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonLoader } from "@/components/Loading";
 import { env } from "@/env";
-import { cn } from "@/utils";
-import { postRequest } from "@/utils/api";
 import { extractNameFromEmail } from "@/utils/email";
-import { isError } from "@/utils/error";
-import type { SendEmailBody, SendEmailResponse } from "@/utils/gmail/mail";
-import {
-  slashCommand,
-  suggestionItems,
-} from "@/app/(app)/compose/SlashCommand";
-import { Separator } from "@/components/ui/separator";
-import "@/styles/prosemirror.css";
+import { isActionError } from "@/utils/error";
+import { Tiptap, type TiptapHandle } from "@/components/editor/Tiptap";
+import { sendEmailAction } from "@/utils/actions/mail";
+import type { ContactsResponse } from "@/app/api/google/contacts/route";
+import type { SendEmailBody } from "@/utils/gmail/mail";
+import { CommandShortcut } from "@/components/ui/command";
+import { useModifierKey } from "@/hooks/useModifierKey";
 
 export type ReplyingToEmail = {
   threadId: string;
@@ -54,24 +35,25 @@ export type ReplyingToEmail = {
   subject: string;
   to: string;
   cc?: string;
-  messageText: string | undefined;
-  messageHtml?: string | undefined;
+  bcc?: string;
+  draftHtml?: string | undefined; // The part being written/edited
+  quotedContentHtml?: string | undefined; // The part being quoted/replied to
+  date?: string; // The date of the original email
 };
 
-export const ComposeEmailForm = (props: {
+export const ComposeEmailForm = ({
+  replyingToEmail,
+  refetch,
+  onSuccess,
+  onDiscard,
+}: {
   replyingToEmail?: ReplyingToEmail;
-  novelEditorClassName?: string;
-  submitButtonClassName?: string;
   refetch?: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (messageId: string, threadId: string) => void;
   onDiscard?: () => void;
 }) => {
-  const { refetch, onSuccess } = props;
-
-  const [openNode, setOpenNode] = useState(false);
-  const [openColor, setOpenColor] = useState(false);
-  const [openLink, setOpenLink] = useState(false);
-  // const [openAi, setOpenAi] = useState(false);
+  const [showFullContent, setShowFullContent] = React.useState(false);
+  const { symbol } = useModifierKey();
 
   const {
     register,
@@ -81,10 +63,11 @@ export const ComposeEmailForm = (props: {
     setValue,
   } = useForm<SendEmailBody>({
     defaultValues: {
-      replyToEmail: props.replyingToEmail,
-      subject: props.replyingToEmail?.subject,
-      to: props.replyingToEmail?.to,
-      cc: props.replyingToEmail?.cc,
+      replyToEmail: replyingToEmail,
+      subject: replyingToEmail?.subject,
+      to: replyingToEmail?.to,
+      cc: replyingToEmail?.cc,
+      messageHtml: replyingToEmail?.draftHtml,
     },
   });
 
@@ -92,22 +75,21 @@ export const ComposeEmailForm = (props: {
     async (data) => {
       const enrichedData = {
         ...data,
-        messageText: data.messageText + props.replyingToEmail?.messageText,
-        messageHtml:
-          (data.messageHtml ?? "") + (props.replyingToEmail?.messageHtml ?? ""),
+        messageHtml: showFullContent
+          ? data.messageHtml || ""
+          : `${data.messageHtml || ""}<br>${replyingToEmail?.quotedContentHtml || ""}`,
       };
+
       try {
-        const res = await postRequest<SendEmailResponse, SendEmailBody>(
-          "/api/google/messages/send",
-          enrichedData,
-        );
-        if (isError(res))
+        const res = await sendEmailAction(enrichedData);
+        if (isActionError(res)) {
           toastError({
             description: "There was an error sending the email :(",
           });
-        else toastSuccess({ description: "Email sent!" });
-
-        onSuccess?.();
+        } else {
+          toastSuccess({ description: "Email sent!" });
+          onSuccess?.(res.messageId ?? "", res.threadId ?? "");
+        }
       } catch (error) {
         console.error(error);
         toastError({ description: "There was an error sending the email :(" });
@@ -115,12 +97,22 @@ export const ComposeEmailForm = (props: {
 
       refetch?.();
     },
-    [
-      refetch,
-      onSuccess,
-      props.replyingToEmail?.messageHtml,
-      props.replyingToEmail?.messageText,
-    ],
+    [refetch, onSuccess, showFullContent, replyingToEmail],
+  );
+
+  const formRef = useHotkeys(
+    "mod+enter",
+    (e) => {
+      e.preventDefault();
+      if (!isSubmitting) {
+        (e.target as HTMLElement).closest("form")?.requestSubmit();
+      }
+    },
+    {
+      enableOnFormTags: true,
+      enableOnContentEditable: true,
+      preventDefault: true,
+    },
   );
 
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -156,12 +148,42 @@ export const ComposeEmailForm = (props: {
 
   const [editReply, setEditReply] = React.useState(false);
 
+  const handleEditorChange = useCallback(
+    (html: string) => {
+      setValue("messageHtml", html);
+    },
+    [setValue],
+  );
+
+  const editorRef = useRef<TiptapHandle>(null);
+
+  const showExpandedContent = useCallback(() => {
+    if (!showFullContent) {
+      try {
+        editorRef.current?.appendContent(
+          replyingToEmail?.quotedContentHtml ?? "",
+        );
+      } catch (error) {
+        console.error("Failed to append content:", error);
+        toastError({ description: "Failed to show full content" });
+        return; // Don't set showFullContent to true if append failed
+      }
+    }
+    setShowFullContent(true);
+  }, [showFullContent, replyingToEmail?.quotedContentHtml]);
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      {props.replyingToEmail?.to && !editReply ? (
-        <button type="button" onClick={() => setEditReply(true)}>
-          <span className="text-green-500">Draft</span> to{" "}
-          {extractNameFromEmail(props.replyingToEmail.to)}
+    <form ref={formRef} onSubmit={handleSubmit(onSubmit)} className="space-y-2">
+      {replyingToEmail?.to && !editReply ? (
+        <button
+          type="button"
+          className="flex gap-1 text-left"
+          onClick={() => setEditReply(true)}
+        >
+          <span className="text-green-500">Draft</span>{" "}
+          <span className="max-w-md break-words text-foreground">
+            to {extractNameFromEmail(replyingToEmail.to)}
+          </span>
         </button>
       ) : (
         <>
@@ -174,14 +196,17 @@ export const ComposeEmailForm = (props: {
                 value={selectedEmailAddressses}
                 onChange={handleComboboxOnChange}
                 multiple
-                nullable={true}
               >
-                <div className="flex min-h-10 w-full flex-1 flex-wrap items-center gap-2 rounded-md border border-gray-300 px-2 py-2 shadow-sm focus-within:border-black focus-within:ring-black disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500 disabled:ring-gray-200 sm:text-sm">
+                <div className="flex min-h-10 w-full flex-1 flex-wrap items-center gap-1.5 rounded-md text-sm disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-muted-foreground">
                   {selectedEmailAddressses.map((emailAddress) => (
                     <Badge
                       key={emailAddress}
-                      variant="outline"
-                      className="h-8 rounded-md border-black bg-black text-white"
+                      variant="secondary"
+                      className="cursor-pointer rounded-md"
+                      onClick={() => {
+                        onRemoveSelectedEmail(emailAddress);
+                        setSearchQuery(emailAddress);
+                      }}
                     >
                       {extractNameFromEmail(emailAddress)}
 
@@ -189,7 +214,7 @@ export const ComposeEmailForm = (props: {
                         type="button"
                         onClick={() => onRemoveSelectedEmail(emailAddress)}
                       >
-                        <XIcon className="ml-1.5 h-3 w-3" />
+                        <XIcon className="ml-1.5 size-3" />
                       </button>
                     </Badge>
                   ))}
@@ -197,7 +222,7 @@ export const ComposeEmailForm = (props: {
                   <div className="relative flex-1">
                     <ComboboxInput
                       value={searchQuery}
-                      className="w-full border-none py-0 focus:border-none focus:ring-0"
+                      className="w-full border-none bg-background p-0 text-sm focus:border-none focus:ring-0"
                       onChange={(event) => setSearchQuery(event.target.value)}
                       onKeyUp={(event) => {
                         if (event.key === "Enter") {
@@ -214,7 +239,7 @@ export const ComposeEmailForm = (props: {
                     {!!data?.result?.length && (
                       <ComboboxOptions
                         className={
-                          "absolute z-10 mt-1 max-h-60 overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none sm:text-sm"
+                          "absolute z-10 mt-1 max-h-60 overflow-auto rounded-md bg-popover py-1 text-base shadow-lg ring-1 ring-border focus:outline-none sm:text-sm"
                         }
                       >
                         <ComboboxOption
@@ -232,8 +257,8 @@ export const ComposeEmailForm = (props: {
                           return (
                             <ComboboxOption
                               className={({ focus }) =>
-                                `cursor-default select-none px-4 py-1 text-gray-900 ${
-                                  focus && "bg-gray-50"
+                                `cursor-default select-none px-4 py-1 text-foreground ${
+                                  focus && "bg-accent"
                                 }`
                               }
                               key={person.emailAddress}
@@ -260,8 +285,10 @@ export const ComposeEmailForm = (props: {
                                     </Avatar>
                                   )}
                                   <div className="ml-4 flex flex-col justify-center">
-                                    <div>{person.name}</div>
-                                    <div className="text-sm font-semibold">
+                                    <div className="text-foreground">
+                                      {person.name}
+                                    </div>
+                                    <div className="text-sm font-semibold text-muted-foreground">
                                       {person.emailAddress}
                                     </div>
                                   </div>
@@ -292,95 +319,39 @@ export const ComposeEmailForm = (props: {
             registerProps={register("subject", { required: true })}
             error={errors.subject}
             placeholder="Subject"
+            className="border border-input bg-background focus:border-slate-200 focus:ring-0 focus:ring-slate-200"
           />
         </>
       )}
 
-      <EditorRoot>
-        {/* TODO onUpdate runs on every change. In most cases, you will want to debounce the updates to prevent too many state changes. */}
-        <EditorContent
-          extensions={[...defaultExtensions, slashCommand]}
-          onUpdate={({ editor }) => {
-            setValue("messageText", editor.getText());
-            setValue("messageHtml", editor.getHTML());
-          }}
-          className={cn(
-            "relative min-h-32 w-full max-w-screen-lg rounded-xl border bg-background sm:rounded-lg",
-            props.novelEditorClassName,
-          )}
-          editorProps={{
-            handleDOMEvents: {
-              keydown: (_view, event) => handleCommandNavigation(event),
-            },
-            attributes: {
-              class:
-                "prose-lg prose-stone dark:prose-invert prose-headings:font-title font-default focus:outline-none max-w-full",
-            },
-          }}
-        >
-          <EditorCommand className="z-50 h-auto max-h-[330px] w-72 overflow-y-auto rounded-md border border-muted bg-background px-1 py-2 shadow-md transition-all">
-            <EditorCommandEmpty className="px-2 text-muted-foreground">
-              No results
-            </EditorCommandEmpty>
-            {suggestionItems.map((item) => (
-              <EditorCommandItem
-                value={item.title}
-                onCommand={(val) => item.command?.(val)}
-                className={
-                  "flex w-full items-center space-x-2 rounded-md px-2 py-1 text-left text-sm hover:bg-accent aria-selected:bg-accent"
-                }
-                key={item.title}
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-md border border-muted bg-background">
-                  {item.icon}
-                </div>
-                <div>
-                  <p className="font-medium">{item.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {item.description}
-                  </p>
-                </div>
-              </EditorCommandItem>
-            ))}
-          </EditorCommand>
+      <Tiptap
+        ref={editorRef}
+        initialContent={replyingToEmail?.draftHtml}
+        onChange={handleEditorChange}
+        className="min-h-[200px]"
+        onMoreClick={
+          !replyingToEmail?.quotedContentHtml || showFullContent
+            ? undefined
+            : showExpandedContent
+        }
+      />
 
-          <EditorBubble
-            tippyOptions={{ placement: "top" }}
-            className="flex w-fit max-w-[90vw] overflow-hidden rounded border border-muted bg-background shadow-xl"
-          >
-            <Separator orientation="vertical" />
-            <NodeSelector open={openNode} onOpenChange={setOpenNode} />
-            <Separator orientation="vertical" />
-            <LinkSelector open={openLink} onOpenChange={setOpenLink} />
-            <Separator orientation="vertical" />
-            <TextButtons />
-            <Separator orientation="vertical" />
-            <ColorSelector open={openColor} onOpenChange={setOpenColor} />
-            {/* <Separator orientation="vertical" />
-            <AISelector open={openAi} onOpenChange={setOpenAi} /> */}
-          </EditorBubble>
-        </EditorContent>
-      </EditorRoot>
-
-      <div
-        className={cn(
-          "flex items-center justify-between",
-          props.submitButtonClassName,
-        )}
-      >
-        <Button type="submit" variant="outline" disabled={isSubmitting}>
+      <div className="flex items-center justify-between">
+        <Button type="submit" disabled={isSubmitting}>
           {isSubmitting && <ButtonLoader />}
           Send
+          <div className="dark ml-2">
+            <CommandShortcut>{symbol}+Enter</CommandShortcut>
+          </div>
         </Button>
 
-        {props.onDiscard && (
+        {onDiscard && (
           <Button
             type="button"
             variant="secondary"
             size="icon"
-            className={props.submitButtonClassName}
             disabled={isSubmitting}
-            onClick={props.onDiscard}
+            onClick={onDiscard}
           >
             <TrashIcon className="h-4 w-4" />
             <span className="sr-only">Discard</span>

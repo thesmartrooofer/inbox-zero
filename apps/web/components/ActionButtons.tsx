@@ -4,7 +4,6 @@ import {
   ArchiveIcon,
   Trash2Icon,
   ExternalLinkIcon,
-  OrbitIcon,
   SparklesIcon,
 } from "lucide-react";
 import { ButtonGroup } from "@/components/ButtonGroup";
@@ -12,28 +11,23 @@ import { LoadingMiniSpinner } from "@/components/Loading";
 import { getGmailUrl } from "@/utils/url";
 import { onTrashThread } from "@/utils/actions/client";
 
-export function ActionButtons(props: {
+export function ActionButtons({
+  threadId,
+  onArchive,
+  onPlanAiAction,
+  isPlanning,
+  refetch,
+  shadow,
+}: {
   threadId: string;
   isPlanning: boolean;
-  isCategorizing: boolean;
   shadow?: boolean;
   onPlanAiAction: () => void;
-  onAiCategorize: () => void;
   onArchive: () => void;
   refetch: (threadId?: string) => void;
 }) {
   const session = useSession();
   const email = session.data?.user.email;
-
-  const {
-    threadId,
-    onArchive,
-    onPlanAiAction,
-    onAiCategorize,
-    isCategorizing,
-    isPlanning,
-    refetch,
-  } = props;
 
   const openInGmail = useCallback(() => {
     // open in gmail
@@ -57,37 +51,21 @@ export function ActionButtons(props: {
       {
         tooltip: "Open in Gmail",
         onClick: openInGmail,
-        icon: (
-          <ExternalLinkIcon
-            className="h-4 w-4 text-gray-700"
-            aria-hidden="true"
-          />
-        ),
+        icon: <ExternalLinkIcon className="size-4" aria-hidden="true" />,
       },
       {
-        tooltip: "Run AI Rules",
+        tooltip: "Process with assistant",
         onClick: onPlanAiAction,
         icon: isPlanning ? (
           <LoadingMiniSpinner />
         ) : (
-          <SparklesIcon className="h-4 w-4 text-gray-700" aria-hidden="true" />
-        ),
-      },
-      {
-        tooltip: "AI Categorize",
-        onClick: onAiCategorize,
-        icon: isCategorizing ? (
-          <LoadingMiniSpinner />
-        ) : (
-          <OrbitIcon className="h-4 w-4 text-gray-700" aria-hidden="true" />
+          <SparklesIcon className="size-4" aria-hidden="true" />
         ),
       },
       {
         tooltip: "Archive",
         onClick: onArchive,
-        icon: (
-          <ArchiveIcon className="h-4 w-4 text-gray-700" aria-hidden="true" />
-        ),
+        icon: <ArchiveIcon className="size-4" aria-hidden="true" />,
       },
       // may remove later
       {
@@ -96,21 +74,12 @@ export function ActionButtons(props: {
         icon: isTrashing ? (
           <LoadingMiniSpinner />
         ) : (
-          <Trash2Icon className="h-4 w-4 text-gray-700" aria-hidden="true" />
+          <Trash2Icon className="size-4" aria-hidden="true" />
         ),
       },
     ],
-    [
-      onTrash,
-      isTrashing,
-      onArchive,
-      onPlanAiAction,
-      isPlanning,
-      onAiCategorize,
-      isCategorizing,
-      openInGmail,
-    ],
+    [onTrash, isTrashing, onArchive, onPlanAiAction, isPlanning, openInGmail],
   );
 
-  return <ButtonGroup buttons={buttons} shadow={props.shadow} />;
+  return <ButtonGroup buttons={buttons} shadow={shadow} />;
 }

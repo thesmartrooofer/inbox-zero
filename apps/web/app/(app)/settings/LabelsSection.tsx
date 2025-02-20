@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { type SubmitHandler, useForm } from "react-hook-form";
 import useSwr, { useSWRConfig } from "swr";
 import { capitalCase } from "capital-case";
@@ -24,7 +24,6 @@ import {
   useGmail,
 } from "@/providers/GmailProvider";
 import { createLabelAction, updateLabelsAction } from "@/utils/actions/mail";
-import { useModal, Modal } from "@/components/Modal";
 import type { Label } from "@prisma/client";
 import { postRequest } from "@/utils/api";
 import type {
@@ -34,6 +33,13 @@ import type {
 import type { UserLabelsResponse } from "@/app/api/user/labels/route";
 import { PlusIcon } from "lucide-react";
 import { isErrorMessage } from "@/utils/error";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 const recommendedLabels = ["Newsletter", "Receipt", "Calendar"];
 
@@ -237,7 +243,7 @@ function LabelsSectionFormInner(props: {
                         <div className="relative flex w-full items-center justify-center">
                           {label}
                           <span className="absolute right-0 hidden group-hover:block">
-                            <PlusIcon className="h-4 w-4 text-gray-500" />
+                            <PlusIcon className="h-4 w-4 text-muted-foreground" />
                           </span>
                         </div>
                       </Tag>
@@ -294,9 +300,8 @@ export function LabelItem(props: {
   );
 }
 
-// server actions was fun to try out but cba to waste time battling with it
 function AddLabelModal() {
-  const { isModalOpen, openModal, closeModal } = useModal();
+  const [isOpen, setIsOpen] = useState(false);
 
   const { mutate } = useSWRConfig();
 
@@ -329,7 +334,7 @@ function AddLabelModal() {
           mutate("/api/google/labels");
           mutate("/api/user/labels");
 
-          closeModal();
+          setIsOpen(false);
         } catch (error) {
           console.error(`Failed to create label "${name}": ${error}`);
           toastError({
@@ -337,13 +342,18 @@ function AddLabelModal() {
           });
         }
       },
-      [closeModal, mutate],
+      [mutate],
     );
 
   return (
-    <>
-      <Button onClick={openModal}>Add Label</Button>
-      <Modal isOpen={isModalOpen} hideModal={closeModal} title="Add Label">
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <DialogTrigger asChild>
+        <Button>Add Label</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add Label</DialogTitle>
+        </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)}>
           <div className="space-y-4">
             <Input
@@ -373,7 +383,7 @@ function AddLabelModal() {
             </SubmitButtonWrapper>
           </div>
         </form>
-      </Modal>
-    </>
+      </DialogContent>
+    </Dialog>
   );
 }

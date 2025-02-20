@@ -3,6 +3,10 @@ import { type NextRequest, NextResponse } from "next/server";
 import { captureException, checkCommonErrors, SafeError } from "@/utils/error";
 import { env } from "@/env";
 import { logErrorToPosthog } from "@/utils/error.server";
+import { createScopedLogger } from "@/utils/logger";
+import { auth } from "@/app/api/auth/[...nextauth]/auth";
+
+const logger = createScopedLogger("middleware");
 
 export type NextHandler = (
   req: NextRequest,
@@ -16,8 +20,7 @@ export function withError(handler: NextHandler): NextHandler {
     } catch (error) {
       if (error instanceof ZodError) {
         if (env.LOG_ZOD_ERRORS) {
-          console.error(`Error for url: ${req.url}:`);
-          console.error(error);
+          logger.error("Error for url", { error, url: req.url });
         }
         return NextResponse.json(
           { error: { issues: error.issues }, isKnownError: true },
@@ -46,7 +49,12 @@ export function withError(handler: NextHandler): NextHandler {
         );
       }
 
-      console.error(`Unhandled error for url: ${req.url}:`, error);
+      logger.error("Unhandled error", {
+        error,
+        url: req.url,
+        params,
+        email: await getEmailFromRequest(req),
+      });
       captureException(error, { extra: { url: req.url, params } });
 
       return NextResponse.json(
@@ -66,4 +74,14 @@ function isErrorWithConfigAndHeaders(
     "config" in error &&
     "headers" in (error as { config: any }).config
   );
+}
+
+async function getEmailFromRequest(req: NextRequest) {
+  try {
+    const session = await auth();
+    return session?.user.email;
+  } catch (error) {
+    logger.error("Error getting email from request", { error });
+    return null;
+  }
 }

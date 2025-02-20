@@ -63,10 +63,18 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
 
   const onLoadMore = () => setSize((size) => size + 1);
 
-  const messages = useMemo(
-    () => data?.flatMap((page) => page.messages) || [],
-    [data],
-  );
+  // filter out messages in same thread
+  // only keep the most recent message in each thread
+  const messages = useMemo(() => {
+    const threadIds = new Set();
+    const messages = data?.flatMap((page) => page.messages) || [];
+    return messages.filter((message) => {
+      // works because messages are sorted by date descending
+      if (threadIds.has(message.threadId)) return false;
+      threadIds.add(message.threadId);
+      return true;
+    });
+  }, [data]);
 
   const { data: rules } = useSWR<RulesResponse>("/api/user/rules");
   const session = useSession();
@@ -86,6 +94,7 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
   const [currentPageLimit, setCurrentPageLimit] = useState(testMode ? 1 : 10);
   const [isRunning, setIsRunning] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<Record<string, RunRulesResult>>({});
+  const handledThreadsRef = useRef(new Set<string>());
 
   const onRun = useCallback(
     async (message: Message, rerun?: boolean) => {
@@ -129,7 +138,9 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
       for (const message of currentBatch) {
         if (!isRunningAllRef.current) break;
         if (results[message.id]) continue;
+        if (handledThreadsRef.current.has(message.threadId)) continue;
         await onRun(message);
+        handledThreadsRef.current.add(message.threadId);
       }
 
       // Check if we got new data in the last request
@@ -152,7 +163,7 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 border-b border-gray-200 px-6 pb-4">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-6 pb-4">
         <div className="flex items-center gap-2">
           {isRunningAll ? (
             <Button onClick={handleStop} variant="outline">
@@ -179,7 +190,10 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
               Custom
             </Button>
           )}
-          <SearchForm onSearch={setSearchQuery} />
+          <SearchForm
+            defaultQuery={searchQuery || undefined}
+            onSearch={setSearchQuery}
+          />
         </div>
       </div>
 
@@ -194,7 +208,7 @@ export function ProcessRulesContent({ testMode }: { testMode: boolean }) {
 
       <LoadingContent loading={isLoading} error={error}>
         {messages.length === 0 ? (
-          <div className="p-4 text-center text-sm text-gray-500">
+          <div className="p-4 text-center text-sm text-muted-foreground">
             No emails found
           </div>
         ) : (
@@ -257,7 +271,7 @@ function ProcessRulesRow({
       <TableCell>
         <div className="flex items-center justify-between">
           <EmailMessageCell
-            from={message.headers.from}
+            sender={message.headers.from}
             subject={message.headers.subject}
             snippet={message.snippet}
             userEmail={userEmail}

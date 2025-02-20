@@ -8,6 +8,8 @@ import type {
   ParsedMessage,
 } from "@/utils/types";
 import { removeExcessiveWhitespace, truncate } from "@/utils/string";
+import { GmailLabel } from "@/utils/gmail/label";
+import { isIgnoredSender } from "@/utils/filter-ignored-senders";
 
 export function parseMessage(message: MessageWithPayload): ParsedMessage {
   return parse(message);
@@ -20,11 +22,31 @@ function parseReply(plainText: string) {
   return result;
 }
 
-export function parseMessages(thread: ThreadWithPayloadMessages) {
+export function parseMessages(
+  thread: ThreadWithPayloadMessages,
+  {
+    withoutIgnoredSenders,
+    withoutDrafts,
+  }: {
+    withoutIgnoredSenders?: boolean;
+    withoutDrafts?: boolean;
+  } = {},
+) {
   const messages =
     thread.messages?.map((message: MessageWithPayload) => {
       return parseMessage(message);
     }) || [];
+
+  if (withoutIgnoredSenders || withoutDrafts) {
+    const filteredMessages = messages.filter((message) => {
+      if (withoutIgnoredSenders && isIgnoredSender(message.headers.from))
+        return false;
+      if (withoutDrafts && message.labelIds?.includes(GmailLabel.DRAFT))
+        return false;
+      return true;
+    });
+    return filteredMessages;
+  }
 
   return messages;
 }
@@ -82,17 +104,19 @@ function removeForwardedContent(text: string): string {
   return text;
 }
 
+export type EmailToContentOptions = {
+  maxLength?: number;
+  extractReply?: boolean;
+  removeForwarded?: boolean;
+};
+
 export function emailToContent(
   email: Pick<ParsedMessage, "textHtml" | "textPlain" | "snippet">,
   {
     maxLength = 2000,
     extractReply = false,
     removeForwarded = false,
-  }: {
-    maxLength?: number;
-    extractReply?: boolean;
-    removeForwarded?: boolean;
-  } = {},
+  }: EmailToContentOptions = {},
 ): string {
   let content = "";
 
@@ -115,4 +139,20 @@ export function emailToContent(
   content = removeExcessiveWhitespace(content);
 
   return maxLength ? truncate(content, maxLength) : content;
+}
+
+export function convertEmailHtmlToText({
+  htmlText,
+}: {
+  htmlText: string;
+}): string {
+  const plainText = convert(htmlText, {
+    wordwrap: 130,
+    selectors: [
+      { selector: "a", options: { hideLinkHrefIfSameAsText: true } },
+      { selector: "img", format: "skip" },
+    ],
+  });
+
+  return plainText;
 }

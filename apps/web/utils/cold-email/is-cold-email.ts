@@ -7,8 +7,9 @@ import { labelMessage } from "@/utils/gmail/label";
 import { ColdEmailSetting, ColdEmailStatus, type User } from "@prisma/client";
 import prisma from "@/utils/prisma";
 import { DEFAULT_COLD_EMAIL_PROMPT } from "@/utils/cold-email/prompt";
-import { stringifyEmail } from "@/utils/ai/choose-rule/stringify-email";
+import { stringifyEmail } from "@/utils/stringify-email";
 import { createScopedLogger } from "@/utils/logger";
+import { hasPreviousEmailsFromSenderOrDomain } from "@/utils/gmail/message";
 
 const logger = createScopedLogger("ai-cold-email");
 
@@ -20,48 +21,68 @@ const aiResponseSchema = z.object({
 type ColdEmailBlockerReason = "hasPreviousEmail" | "ai" | "ai-already-labeled";
 
 export async function isColdEmail({
-  hasPreviousEmail,
   email,
   user,
+  gmail,
 }: {
-  hasPreviousEmail: boolean;
-  email: { from: string; subject: string; content: string };
+  email: {
+    from: string;
+    subject: string;
+    content: string;
+    date?: Date;
+    threadId?: string;
+    messageId: string | null;
+  };
   user: Pick<User, "id" | "email" | "coldEmailPrompt"> & UserAIFields;
+  gmail: gmail_v1.Gmail;
 }): Promise<{
   isColdEmail: boolean;
   reason: ColdEmailBlockerReason;
   aiReason?: string | null;
 }> {
-  logger.trace("Checking is cold email");
+  const loggerOptions = {
+    userId: user.id,
+    email: user.email,
+    threadId: email.threadId,
+    messageId: email.messageId,
+  };
 
-  if (hasPreviousEmail)
-    return { isColdEmail: false, reason: "hasPreviousEmail" };
+  logger.info("Checking is cold email", loggerOptions);
 
   // Check if we marked it as a cold email already
-  const coldEmail = await prisma.coldEmail.findUnique({
-    where: {
-      userId_fromEmail: {
-        userId: "user.id",
-        fromEmail: email.from,
-      },
-      status: ColdEmailStatus.AI_LABELED_COLD,
-    },
+  const isColdEmailer = await isKnownColdEmailSender({
+    from: email.from,
+    userId: user.id,
   });
 
-  if (coldEmail) {
-    logger.info("Already marked as cold email", {
+  if (isColdEmailer) {
+    logger.info("Known cold email sender", {
+      ...loggerOptions,
       from: email.from,
-      userId: user.id,
     });
     return { isColdEmail: true, reason: "ai-already-labeled" };
+  }
+
+  const hasPreviousEmail =
+    email.date && email.messageId
+      ? await hasPreviousEmailsFromSenderOrDomain(gmail, {
+          from: email.from,
+          date: email.date,
+          messageId: email.messageId,
+        })
+      : false;
+
+  if (hasPreviousEmail) {
+    logger.info("Has previous email", loggerOptions);
+    return { isColdEmail: false, reason: "hasPreviousEmail" };
   }
 
   // otherwise run through ai to see if it's a cold email
   const res = await aiIsColdEmail(email, user);
 
   logger.info("AI is cold email?", {
+    ...loggerOptions,
     coldEmail: res.coldEmail,
-    userId: user.id,
   });
 
   return {
@@ -69,6 +90,23 @@ export async function isColdEmail({
     reason: "ai",
     aiReason: res.reason,
   };
+}
+
+async function isKnownColdEmailSender({
+  from,
+  userId,
+}: {
+  from: string;
+  userId: string;
+}) {
+  const coldEmail = await prisma.coldEmail.findUnique({
+    where: {
+      userId_fromEmail: { userId, fromEmail: from },
+      status: ColdEmailStatus.AI_LABELED_COLD,
+    },
+    select: { id: true },
+  });
+  return !!coldEmail;
 }
 
 async function aiIsColdEmail(
@@ -98,8 +136,9 @@ Determine if the email is a cold email or not.`;
 
   const prompt = `<email>
 ${stringifyEmail(email, 500)}
-</email>
-`;
+</email>`;
+
+  logger.trace("AI is cold email prompt", { system, prompt });
 
   const response = await chatCompletionObject({
     userAi: user,
@@ -110,17 +149,19 @@ ${stringifyEmail(email, 500)}
     usageLabel: "Cold email check",
   });
 
+  logger.trace("AI is cold email response", { response: response.object });
+
   return response.object;
 }
 
 export async function runColdEmailBlocker(options: {
-  hasPreviousEmail: boolean;
   email: {
     from: string;
     subject: string;
     content: string;
     messageId: string;
     threadId: string;
+    date: Date;
   };
   gmail: gmail_v1.Gmail;
   user: Pick<User, "id" | "email" | "coldEmailPrompt" | "coldEmailBlocker"> &
@@ -132,7 +173,7 @@ export async function runColdEmailBlocker(options: {
   return response;
 }
 
-async function blockColdEmail(options: {
+export async function blockColdEmail(options: {
   gmail: gmail_v1.Gmail;
   email: { from: string; messageId: string; threadId: string };
   user: Pick<User, "id" | "email" | "coldEmailBlocker">;
@@ -155,7 +196,8 @@ async function blockColdEmail(options: {
 
   if (
     user.coldEmailBlocker === ColdEmailSetting.LABEL ||
-    user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_LABEL
+    user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_LABEL ||
+    user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_READ_AND_LABEL
   ) {
     if (!user.email) throw new Error("User email is required");
     const coldEmailLabel = await getOrCreateInboxZeroLabel({
@@ -166,15 +208,24 @@ async function blockColdEmail(options: {
       logger.error("No gmail label id", { userId: user.id });
 
     const shouldArchive =
-      user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_LABEL;
+      user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_LABEL ||
+      user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_READ_AND_LABEL;
+
+    const shouldMarkRead =
+      user.coldEmailBlocker === ColdEmailSetting.ARCHIVE_AND_READ_AND_LABEL;
+
+    const addLabelIds: string[] = [];
+    if (coldEmailLabel?.id) addLabelIds.push(coldEmailLabel.id);
+
+    const removeLabelIds: string[] = [];
+    if (shouldArchive) removeLabelIds.push(GmailLabel.INBOX);
+    if (shouldMarkRead) removeLabelIds.push(GmailLabel.UNREAD);
 
     await labelMessage({
       gmail,
       messageId: email.messageId,
-      // label email as "Cold Email"
-      addLabelIds: coldEmailLabel?.id ? [coldEmailLabel.id] : undefined,
-      // archive email
-      removeLabelIds: shouldArchive ? [GmailLabel.INBOX] : undefined,
+      addLabelIds: addLabelIds.length ? addLabelIds : undefined,
+      removeLabelIds: removeLabelIds.length ? removeLabelIds : undefined,
     });
   }
 }

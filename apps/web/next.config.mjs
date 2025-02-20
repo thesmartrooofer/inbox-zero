@@ -150,6 +150,16 @@ const nextConfig = {
         destination: "/bulk-unsubscribe",
         permanent: false,
       },
+      {
+        source: "/request-access",
+        destination: "/early-access",
+        permanent: true,
+      },
+      {
+        source: "/reply-tracker",
+        destination: "/reply-zero",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {
@@ -160,6 +170,7 @@ const nextConfig = {
       },
     ];
   },
+  // Security headers: https://nextjs.org/docs/app/building-your-application/configuring/progressive-web-apps#8-securing-your-application
   async headers() {
     return [
       {
@@ -172,6 +183,31 @@ const nextConfig = {
           {
             key: "X-XSS-Protection",
             value: "1; mode=block",
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+        ],
+      },
+      {
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/javascript; charset=utf-8",
+          },
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self' 'unsafe-eval'",
           },
         ],
       },

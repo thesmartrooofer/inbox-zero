@@ -10,11 +10,11 @@ import {
   type Rule,
   type User,
 } from "@prisma/client";
-import type { ActionItem } from "@/utils/ai/actions";
+import type { ActionItem } from "@/utils/ai/types";
 import { findMatchingRule } from "@/utils/ai/choose-rule/match-rules";
 import { getActionItemsWithAiArgs } from "@/utils/ai/choose-rule/ai-choose-args";
 import { executeAct } from "@/utils/ai/choose-rule/execute";
-import { getEmailForLLM } from "@/utils/ai/choose-rule/get-email-from-message";
+import { getEmailForLLM } from "@/utils/get-email-from-message";
 import prisma from "@/utils/prisma";
 import { createScopedLogger } from "@/utils/logger";
 import type { MatchReason } from "@/utils/ai/choose-rule/types";
@@ -44,6 +44,9 @@ export async function runRulesOnMessage({
   isTest: boolean;
 }): Promise<RunRulesResult> {
   const result = await findMatchingRule(rules, message, user);
+
+  logger.trace("Matching rule", { result });
+
   if (result.rule) {
     return await runRule(
       result.rule,
@@ -107,6 +110,7 @@ async function runRule(
       userEmail: user.email || "",
       executedRule,
       email: message,
+      isReplyTrackingRule: rule.trackReplies || false,
     });
   }
 

@@ -16,7 +16,7 @@ import {
 } from "@prisma/client";
 import prisma from "@/utils/prisma";
 import { aiChooseRule } from "@/utils/ai/choose-rule/ai-choose-rule";
-import { getEmailForLLM } from "@/utils/ai/choose-rule/get-email-from-message";
+import { getEmailForLLM } from "@/utils/get-email-from-message";
 import { isReplyInThread } from "@/utils/thread";
 import type { UserAIFields } from "@/utils/llms/types";
 import { createScopedLogger } from "@/utils/logger";
@@ -74,10 +74,31 @@ async function findPotentialMatchingRules({
     if (isThread && !runOnThreads) continue;
 
     const conditionTypes = getConditionTypes(rule);
+    const matchReasons: MatchReason[] = [];
+
+    // group - ignores conditional operator
+    // if a match is found, return it
+    if (rule.groupId) {
+      const { matchingItem, group } = await matchesGroupRule(
+        rule,
+        await getGroups(rule.userId),
+        message,
+      );
+      if (matchingItem) {
+        matchReasons.push({
+          type: RuleType.GROUP,
+          groupItem: matchingItem,
+          group,
+        });
+
+        return { match: rule, matchReasons };
+      }
+    }
+
+    // Regular conditions:
     const unmatchedConditions = new Set<RuleType>(
       Object.keys(conditionTypes) as RuleType[],
     );
-    const matchReasons: MatchReason[] = [];
 
     // static
     if (conditionTypes.STATIC) {
@@ -87,29 +108,6 @@ async function findPotentialMatchingRules({
         matchReasons.push({ type: RuleType.STATIC });
         if (operator === LogicalOperator.OR || !unmatchedConditions.size)
           return { match: rule, matchReasons };
-      } else {
-        // no match, so can't be a match with AND
-        if (operator === LogicalOperator.AND) continue;
-      }
-    }
-
-    // group
-    if (conditionTypes.GROUP) {
-      const { matchingItem, group } = await matchesGroupRule(
-        rule,
-        await getGroups(rule.userId),
-        message,
-      );
-      if (matchingItem) {
-        unmatchedConditions.delete(RuleType.GROUP);
-        matchReasons.push({
-          type: RuleType.GROUP,
-          groupItem: matchingItem,
-          group,
-        });
-        if (operator === LogicalOperator.OR || !unmatchedConditions.size) {
-          return { match: rule, matchReasons };
-        }
       } else {
         // no match, so can't be a match with AND
         if (operator === LogicalOperator.AND) continue;
@@ -219,7 +217,12 @@ export function matchesStaticRule(
 
   const safeRegexTest = (pattern: string, text: string) => {
     try {
-      return new RegExp(pattern).test(text);
+      const regexPattern = pattern.startsWith("*")
+        ? // Convert *@gmail.com to .*@gmail.com
+          `.*${pattern.slice(1)}`
+        : pattern;
+
+      return new RegExp(regexPattern).test(text);
     } catch (error) {
       logger.error("Invalid regex pattern", { pattern, error });
       return false;

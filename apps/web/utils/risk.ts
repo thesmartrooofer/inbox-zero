@@ -1,5 +1,6 @@
 import type { RulesResponse } from "@/app/api/user/rules/route";
 import { isAIRule, type RuleConditions } from "@/utils/condition";
+import { ActionType } from "@prisma/client";
 
 const RISK_LEVELS = {
   VERY_HIGH: "very-high",
@@ -10,17 +11,36 @@ const RISK_LEVELS = {
 
 export type RiskLevel = (typeof RISK_LEVELS)[keyof typeof RISK_LEVELS];
 
+export type RiskAction = {
+  type: ActionType;
+  subject: string | null;
+  content: string | null;
+  to: string | null;
+  cc: string | null;
+  bcc: string | null;
+};
+
 export function getActionRiskLevel(
-  action: Pick<
-    RulesResponse[number]["actions"][number],
-    "subject" | "content" | "to" | "cc" | "bcc"
-  >,
+  action: RiskAction,
   isAutomated: boolean,
   rule: RuleConditions,
 ): {
   level: RiskLevel;
   message: string;
 } {
+  const highRiskActions = [
+    ActionType.REPLY,
+    ActionType.FORWARD,
+    ActionType.SEND_EMAIL,
+  ];
+  if (!highRiskActions.some((type) => type === action.type)) {
+    return {
+      level: RISK_LEVELS.LOW,
+      message:
+        "Low Risk: No email sending action is performed without your review.",
+    };
+  }
+
   const fieldStatus = getFieldsDynamicStatus(action);
 
   const contentFields = [fieldStatus.subject, fieldStatus.content];
@@ -126,12 +146,7 @@ export function getRiskLevel(
   );
 }
 
-function getFieldsDynamicStatus(
-  action: Pick<
-    RulesResponse[number]["actions"][number],
-    "subject" | "content" | "to" | "cc" | "bcc"
-  >,
-) {
+function getFieldsDynamicStatus(action: RiskAction) {
   const checkFieldStatus = (field: string | null) => {
     if (!field) return null;
     if (isFullyDynamicField(field)) return "fully-dynamic";

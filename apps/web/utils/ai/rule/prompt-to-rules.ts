@@ -63,7 +63,7 @@ ${promptFile}
 </prompt>`;
 
   if (env.NODE_ENV === "development") {
-    logger.trace("prompt-to-rules", {
+    logger.trace("Input", {
       system,
       prompt,
       parameters: zodToJsonSchema(parameters),
@@ -88,21 +88,9 @@ ${promptFile}
     rules: CreateOrUpdateRuleSchemaWithCategories[];
   };
 
-  logger.trace("Result", { rules });
+  logger.trace("Output", { rules });
 
-  return rules.map((rule) => ({
-    ...rule,
-    actions: rule.actions.map((action) => ({
-      type: action.type,
-      label: action.fields?.label ?? undefined,
-      to: action.fields?.to ?? undefined,
-      cc: action.fields?.cc ?? undefined,
-      bcc: action.fields?.bcc ?? undefined,
-      subject: action.fields?.subject ?? undefined,
-      content: action.fields?.content ?? undefined,
-      webhookUrl: action.fields?.webhookUrl ?? undefined,
-    })),
-  }));
+  return rules;
 }
 
 function getSystemPrompt({
@@ -115,7 +103,8 @@ function getSystemPrompt({
 IMPORTANT: If a user provides a snippet, use that full snippet in the rule. Don't include placeholders unless it's clear one is needed.
 
 You can use multiple conditions in a rule, but aim for simplicity.
-If a rule can be handed without ai instructions, that's preferred, but often this won't be possible, so you can use the "aiInstructions" field.
+In most cases, you should use the "aiInstructions" and sometimes you will use other fields in addition.
+If a rule can be handled fully with static conditions, do so, but this is rarely possible.
 
 <examples>
   <example>
@@ -127,7 +116,8 @@ If a rule can be handed without ai instructions, that's preferred, but often thi
         "rules": [{
           "name": "Label Newsletters",
           "condition": {
-            "group": "Newsletters"${
+            "aiInstructions": "Apply this rule to newsletters"
+            ${
               hasSmartCategories
                 ? `,
               "categories": {
@@ -186,7 +176,7 @@ If a rule can be handed without ai instructions, that's preferred, but often thi
 
   <example>
     <input>
-      Label all urgent emails from matt@company.com as "Urgent"
+      Label all urgent emails from company.com as "Urgent"
     </input>
     <output>
       {
@@ -196,7 +186,7 @@ If a rule can be handed without ai instructions, that's preferred, but often thi
             "conditionalOperator": "AND",
             "aiInstructions": "Apply this rule to urgent emails",
             "static": {
-              "from": "matt@company.com"
+              "from": "@company.com"
             }
           },
           "actions": [

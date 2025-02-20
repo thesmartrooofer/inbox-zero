@@ -2,9 +2,8 @@
 
 import { useCallback, useState } from "react";
 import useSWR from "swr";
-import Link from "next/link";
-import { ExternalLinkIcon } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { CircleXIcon } from "lucide-react";
 import { LoadingContent } from "@/components/LoadingContent";
 import type { ColdEmailsResponse } from "@/app/api/user/cold-email/route";
 import {
@@ -18,21 +17,16 @@ import {
 import { DateCell } from "@/app/(app)/automation/ExecutedRulesTable";
 import { TablePagination } from "@/components/TablePagination";
 import { AlertBasic } from "@/components/Alert";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { getGmailSearchUrl } from "@/utils/url";
 import { Button } from "@/components/ui/button";
 import { useSearchParams } from "next/navigation";
 import { markNotColdEmailAction } from "@/utils/actions/cold-email";
-import { SectionDescription } from "@/components/Typography";
 import { Checkbox } from "@/components/Checkbox";
 import { useToggleSelect } from "@/hooks/useToggleSelect";
 import { handleActionResult } from "@/utils/server-action";
 import { useUser } from "@/hooks/useUser";
 import { ViewEmailButton } from "@/components/ViewEmailButton";
-import {
-  EmailMessageCell,
-  EmailMessageCellWithData,
-} from "@/components/EmailMessageCell";
+import { EmailMessageCellWithData } from "@/components/EmailMessageCell";
+import { EnableFeatureCard } from "@/components/EnableFeatureCard";
 
 export function ColdEmailList() {
   const searchParams = useSearchParams();
@@ -96,7 +90,6 @@ export function ColdEmailList() {
               <div>
                 <Button
                   size="sm"
-                  variant="outline"
                   onClick={markNotColdEmailSelected}
                   // disabled={isApproving || isRejecting}
                   loading={isRejecting}
@@ -172,7 +165,7 @@ function Row({
       </TableCell>
       <TableCell>
         <EmailMessageCellWithData
-          from={row.fromEmail}
+          sender={row.fromEmail}
           userEmail={userEmail}
           threadId={row.threadId || ""}
           messageId={row.messageId || ""}
@@ -191,7 +184,7 @@ function Row({
             />
           )}
           <Button
-            variant="outline"
+            Icon={CircleXIcon}
             onClick={async () => {
               setIsMarkingColdEmail(true);
               await markNotColdEmailAction({ sender: row.fromEmail });
@@ -213,16 +206,16 @@ function NoColdEmails() {
 
   if (!data?.coldEmailBlocker || data?.coldEmailBlocker === "DISABLED") {
     return (
-      <div className="mx-auto my-8 px-4 text-center">
-        <SectionDescription>
-          Cold email blocker is disabled. Enable it to start blocking cold
-          emails.
-        </SectionDescription>
-        <Button className="mt-4" asChild>
-          <Link href="/cold-email-blocker?tab=settings">
-            Enable Cold Email Blocker
-          </Link>
-        </Button>
+      <div className="mb-10">
+        <EnableFeatureCard
+          title="Cold Email Blocker"
+          description="Block unwanted cold emails automatically. Our AI identifies and filters out unsolicited sales emails before they reach your inbox."
+          imageSrc="/images/illustrations/calling-help.svg"
+          imageAlt="Cold email blocker"
+          buttonText="Set Up"
+          href="/cold-email-blocker?tab=settings"
+          hideBorder
+        />
       </div>
     );
   }

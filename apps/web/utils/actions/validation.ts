@@ -7,24 +7,12 @@ import {
 import { ActionType, RuleType } from "@prisma/client";
 
 // groups
-export const createGroupBody = z.object({
-  name: z.string(),
-  prompt: z.string().optional(),
-});
-export type CreateGroupBody = z.infer<typeof createGroupBody>;
-
 export const addGroupItemBody = z.object({
   groupId: z.string(),
   type: z.enum([GroupItemType.FROM, GroupItemType.SUBJECT]),
   value: z.string(),
 });
 export type AddGroupItemBody = z.infer<typeof addGroupItemBody>;
-
-export const updateGroupPromptBody = z.object({
-  groupId: z.string(),
-  prompt: z.string().nullable(),
-});
-export type UpdateGroupPromptBody = z.infer<typeof updateGroupPromptBody>;
 
 // rules
 export const zodActionType = z.enum([
@@ -36,6 +24,7 @@ export const zodActionType = z.enum([
   ActionType.REPLY,
   ActionType.SEND_EMAIL,
   ActionType.CALL_WEBHOOK,
+  ActionType.MARK_READ,
 ]);
 
 const zodField = z
@@ -84,16 +73,11 @@ const zodAction = z
 export const zodRuleType = z.enum([
   RuleType.AI,
   RuleType.STATIC,
-  RuleType.GROUP,
   RuleType.CATEGORY,
 ]);
 
 const zodAiCondition = z.object({
   instructions: z.string().nullish(),
-});
-
-const zodGroupCondition = z.object({
-  groupId: z.string().nullish(),
 });
 
 const zodStaticCondition = z.object({
@@ -113,7 +97,6 @@ const zodCategoryCondition = z.object({
 const zodCondition = z.object({
   type: zodRuleType,
   ...zodAiCondition.shape,
-  ...zodGroupCondition.shape,
   ...zodStaticCondition.shape,
   ...zodCategoryCondition.shape,
 });
@@ -121,8 +104,9 @@ export type ZodCondition = z.infer<typeof zodCondition>;
 
 export const createRuleBody = z.object({
   id: z.string().optional(),
-  name: z.string(),
+  name: z.string().min(1, "Please enter a name"),
   instructions: z.string().nullish(),
+  groupId: z.string().nullish(),
   automate: z.boolean().nullish(),
   runOnThreads: z.boolean().nullish(),
   actions: z.array(zodAction).min(1, "You must have at least one action"),
@@ -221,7 +205,9 @@ export const coldEmailBlockerBody = z.object({
   textHtml: z.string().nullable(),
   textPlain: z.string().nullable(),
   snippet: z.string().nullable(),
-  date: z.string().optional(),
+  // Hacky fix. Not sure why this happens. Is internalDate sometimes a string and sometimes a number?
+  date: z.string().or(z.number()).optional(),
   threadId: z.string().nullable(),
+  messageId: z.string().nullable(),
 });
 export type ColdEmailBlockerBody = z.infer<typeof coldEmailBlockerBody>;

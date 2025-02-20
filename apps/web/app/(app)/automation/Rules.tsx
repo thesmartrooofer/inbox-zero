@@ -7,6 +7,7 @@ import {
   PenIcon,
   PlusIcon,
   AlertTriangleIcon,
+  InfoIcon,
 } from "lucide-react";
 import type { RulesResponse } from "@/app/api/user/rules/route";
 import { LoadingContent } from "@/components/LoadingContent";
@@ -92,7 +93,7 @@ export function Rules() {
                   .map((rule) => (
                     <TableRow
                       key={rule.id}
-                      className={!rule.enabled ? "bg-gray-100 opacity-60" : ""}
+                      className={!rule.enabled ? "bg-muted opacity-60" : ""}
                     >
                       <TableCell className="font-medium">
                         <Link href={`/automation/rule/${rule.id}`}>
@@ -101,7 +102,16 @@ export function Rules() {
                               Disabled
                             </Badge>
                           )}
-                          {rule.name}
+                          {rule.trackReplies ? (
+                            <Tooltip content="This is the rule used by Reply Zero">
+                              <Badge color="blue" className="mr-2">
+                                {rule.name}
+                                <InfoIcon className="ml-1 size-3" />
+                              </Badge>
+                            </Tooltip>
+                          ) : (
+                            rule.name
+                          )}
                         </Link>
 
                         {!rule.enabled && (

@@ -9,7 +9,7 @@ import {
   type Rule,
   type User,
 } from "@prisma/client";
-import type { UserAIFields } from "@/utils/llms/types";
+import type { UserEmailWithAI } from "@/utils/llms/types";
 import type { RuleWithRelations } from "@/utils/ai/rule/create-prompt-from-rule";
 import { isDefined, type ParsedMessage } from "@/utils/types";
 import {
@@ -17,7 +17,7 @@ import {
   type CreateRuleSchemaWithCategories,
   getCreateRuleSchemaWithCategories,
 } from "@/utils/ai/rule/create-rule-schema";
-import { addGroupItem, deleteGroupItem } from "@/utils/group/group-item";
+import { deleteGroupItem } from "@/utils/group/group-item";
 import {
   addRuleCategories,
   partialUpdateRule,
@@ -26,12 +26,14 @@ import {
 } from "@/utils/rule/rule";
 import { updateCategoryForSender } from "@/utils/categorize/senders/categorize";
 import { findSenderByEmail } from "@/utils/sender";
-import { getEmailForLLM } from "@/utils/ai/choose-rule/get-email-from-message";
-import { stringifyEmailSimple } from "@/utils/ai/choose-rule/stringify-email";
+import { getEmailForLLM } from "@/utils/get-email-from-message";
+import { stringifyEmailSimple } from "@/utils/stringify-email";
 import {
   updatePromptFileOnRuleCreated,
   updatePromptFileOnRuleUpdated,
 } from "@/utils/rule/prompt-file";
+import { env } from "@/env";
+import { posthogCaptureEvent } from "@/utils/posthog";
 
 const logger = createScopedLogger("ai-fix-rules");
 
@@ -44,7 +46,7 @@ export async function processUserRequest({
   categories,
   senderCategory,
 }: {
-  user: Pick<User, "id" | "email" | "about"> & UserAIFields;
+  user: Pick<User, "id" | "about"> & UserEmailWithAI;
   rules: RuleWithRelations[];
   originalEmail: ParsedMessage | null;
   messages: { role: "assistant" | "user"; content: string }[];
@@ -52,6 +54,14 @@ export async function processUserRequest({
   categories: Pick<Category, "id" | "name">[] | null;
   senderCategory: string | null;
 }) {
+  posthogCaptureEvent(user.email, "AI Assistant Process Started", {
+    hasOriginalEmail: !!originalEmail,
+    hasMatchedRule: !!matchedRule,
+  });
+
+  if (messages[messages.length - 1].role === "assistant")
+    throw new Error("Assistant message cannot be last");
+
   const userRules = rulesToXML(rules);
 
   const system = `You are an email management assistant that helps users manage their email rules.
@@ -63,31 +73,39 @@ You can fix rules using these specific operations:
 - Update static conditions (from, to, subject, body)
 - Add or remove categories
 
-2. Manage Groups:
-- Add items to groups (email addresses or subject patterns)
-- Remove items from groups
-- Never mix static conditions with group conditions
+2. Create New Rules:
+- Create new rules when asked or when existing ones cannot be modified to fit the need
+- In general, you should NOT create new rules. Modify existing ones instead. If a user asked to exclude something from an existing rule, that's not a request to create a new rule, but to edit the existing rule.
 
-3. Create New Rules:
-- Create new rules when existing ones cannot be modified to fit the need
+${
+  matchedRule?.group?.items?.length
+    ? `3. Manage Learned Patterns:
+- These are patterns that have been learned from the user's email history to always be matched (and they ignore the conditionalOperator setting)
+- Patterns are email addresses or subjects
+- You can remove patterns`
+    : ""
+}
 
 When fixing rules:
 - Make one precise change at a time
 - Prefer minimal changes that solve the problem
-- Only add AI instructions if simpler conditions won't suffice
 - Keep rules general and maintainable
 
 Rule matching logic:
-- All static conditions (from, to, subject, body) use AND logic - meaning all conditions must match
-- Top level conditions (static, group, category, AI instructions) can use either AND or OR logic, controlled by the conditionalOperator setting
+- All static conditions (from, to, subject, body) use AND logic - meaning all static conditions must match
+- Top level conditions (AI instructions, static, category) can use either AND or OR logic, controlled by the conditionalOperator setting
 
 Best practices:
 - For static conditions, use email patterns (e.g., '@company.com') when matching multiple addresses
-- For groups, collect similar items that are likely to appear together (e.g., newsletter senders, receipt subject patterns)
-- Only use subject patterns if they are likely to be recurring (e.g., "Your Monthly Statement", "Order Confirmation")
-- IMPORTANT: do not create new rules unless absolutely necessary and the user has asked for it.
+- IMPORTANT: do not create new rules unless absolutely necessary. Avoid duplicate rules, so make sure to check if the rule already exists.
+- You can use multiple conditions in a rule, but aim for simplicity.
+- When creating rules, in most cases, you should use the "aiInstructions" and sometimes you will use other fields in addition.
+- If a rule can be handled fully with static conditions, do so, but this is rarely possible.
 
-Always end by using the reply tool to explain what changes were made.`;
+Always end by using the reply tool to explain what changes were made.
+Use simple language and avoid jargon in your reply.
+When you've made updates, include a link to the rules page at the end of your reply: ${env.NEXT_PUBLIC_BASE_URL}/automation?tab=rules
+If you are unable to fix the rule, say so.`;
 
   const prompt = `${
     originalEmail
@@ -140,15 +158,40 @@ ${senderCategory || "No category"}
   const createdRules = new Map<string, RuleWithRelations>();
   const updatedRules = new Map<string, RuleWithRelations>();
 
+  const loggerOptions = {
+    userId: user.id,
+    email: user.email,
+    messageId: originalEmail?.id,
+    threadId: originalEmail?.threadId,
+  };
+
   async function updateRule(ruleName: string, rule: Partial<Rule>) {
     try {
-      const updatedRule = await partialUpdateRule(ruleName, rule);
+      const ruleId = rules.find((r) => r.name === ruleName)?.id;
+
+      if (!ruleId) {
+        return {
+          error: "Rule not found",
+          message: `Rule ${ruleName} not found`,
+        };
+      }
+
+      const updatedRule = await partialUpdateRule({ ruleId, data: rule });
       updatedRules.set(updatedRule.id, updatedRule);
       return { success: true };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      logger.error("Error while updating rule", {
+        ...loggerOptions,
+        ruleName,
+        keys: Object.keys(rule),
+        error: message,
+      });
+
       return {
         error: "Failed to update rule",
-        message: error instanceof Error ? error.message : String(error),
+        message,
       };
     }
   }
@@ -157,57 +200,6 @@ ${senderCategory || "No category"}
     userAi: user,
     messages: allMessages,
     tools: {
-      create_rule: tool({
-        description: "Create a new rule",
-        parameters: (categories
-          ? getCreateRuleSchemaWithCategories(
-              categories.map((c) => c.name) as [string, ...string[]],
-            )
-          : createRuleSchema
-        )
-          // Simplify rule creation to not include groups
-          .extend({
-            condition: createRuleSchema.shape.condition.omit({ group: true }),
-          }),
-        execute: async ({ name, condition, actions }) => {
-          logger.info("Create Rule", { name, condition, actions });
-
-          const conditions =
-            condition as CreateRuleSchemaWithCategories["condition"];
-
-          const groupId = null;
-
-          try {
-            const rule = await safeCreateRule(
-              { name, condition, actions },
-              user.id,
-              groupId,
-              conditions.categories?.categoryFilters || [],
-            );
-
-            if ("error" in rule) {
-              return {
-                error: "Failed to create rule",
-                message: rule.error,
-              };
-            }
-
-            createdRules.set(rule.id, rule);
-
-            return { success: true };
-          } catch (error) {
-            return {
-              error: "Failed to create rule",
-              message: error instanceof Error ? error.message : String(error),
-            };
-          }
-        },
-      }),
-      list_rules: tool({
-        description: "List all existing rules for the user",
-        parameters: z.object({}),
-        execute: async () => userRules,
-      }),
       update_conditional_operator: tool({
         description: "Update the conditional operator of a rule",
         parameters: z.object({
@@ -221,6 +213,7 @@ ${senderCategory || "No category"}
             ruleName,
             conditionalOperator,
           });
+          trackToolCall("update_conditional_operator", user.email);
 
           return updateRule(ruleName, { conditionalOperator });
         },
@@ -233,6 +226,7 @@ ${senderCategory || "No category"}
         }),
         execute: async ({ ruleName, aiInstructions }) => {
           logger.info("Edit AI Instructions", { ruleName, aiInstructions });
+          trackToolCall("update_ai_instructions", user.email);
 
           return updateRule(ruleName, { instructions: aiInstructions });
         },
@@ -245,6 +239,7 @@ ${senderCategory || "No category"}
         }),
         execute: async ({ ruleName, staticConditions }) => {
           logger.info("Edit Static Conditions", { ruleName, staticConditions });
+          trackToolCall("update_static_conditions", user.email);
 
           return updateRule(ruleName, {
             from: staticConditions?.from,
@@ -253,64 +248,93 @@ ${senderCategory || "No category"}
           });
         },
       }),
-      add_to_group: tool({
-        description: "Add a group item",
-        parameters: z.object({
-          groupName: z
-            .string()
-            .describe("The name of the group to add the group item to"),
-          type: z
-            .enum(["from", "subject"])
-            .describe("The type of the group item to add"),
-          value: z
-            .string()
-            .describe(
-              "The value of the group item to add. e.g. '@company.com', 'matt@company.com', 'Receipt from'",
-            ),
-        }),
-        execute: async ({ groupName, type, value }) => {
-          logger.info("Add To Group", { groupName, type, value });
+      // We may bring this back as "learned patterns"
+      // add_pattern: tool({
+      //   description: "Add a pattern",
+      //   parameters: z.object({
+      //     ruleName: z
+      //       .string()
+      //       .describe("The name of the rule to add the pattern to"),
+      //     type: z
+      //       .enum(["from", "subject"])
+      //       .describe("The type of the pattern to add"),
+      //     value: z
+      //       .string()
+      //       .describe(
+      //         "The value of the pattern to add. e.g. '@company.com', 'matt@company.com', 'Receipt from'",
+      //       ),
+      //   }),
+      //   execute: async ({ ruleName, type, value }) => {
+      //     logger.info("Add To Learned Patterns", { ruleName, type, value });
 
-          const group = rules.find((r) => r.group?.name === groupName)?.group;
-          const groupId = group?.id;
+      //     const group = rules.find((r) => r.group?.name === groupName)?.group;
+      //     const groupId = group?.id;
 
-          if (!groupId) {
-            logger.error("Group not found", { groupName });
-            return { error: "Group not found" };
-          }
+      //     if (!groupId) {
+      //       logger.error("Group not found", {
+      //         ...loggerOptions,
+      //         groupName,
+      //       });
+      //       return { error: "Group not found" };
+      //     }
 
-          const groupItemType = getGroupItemType(type);
+      //     const groupItemType = getPatternType(type);
 
-          if (!groupItemType) {
-            logger.error("Invalid group item type", { type });
-            return { error: "Invalid group item type" };
-          }
+      //     if (!groupItemType) {
+      //       logger.error("Invalid pattern type", {
+      //         ...loggerOptions,
+      //         type,
+      //       });
+      //       return { error: "Invalid pattern type" };
+      //     }
 
-          await addGroupItem({ groupId, type: groupItemType, value });
+      //     try {
+      //       await addGroupItem({ groupId, type: groupItemType, value });
+      //     } catch (error) {
+      //       const message =
+      //         error instanceof Error ? error.message : String(error);
 
-          return { success: true };
-        },
-      }),
+      //       logger.error("Error while adding pattern", {
+      //         ...loggerOptions,
+      //         groupId,
+      //         type: groupItemType,
+      //         value,
+      //         error: message,
+      //       });
+      //       return {
+      //         error: "Failed to add pattern",
+      //         message,
+      //       };
+      //     }
+
+      //     return { success: true };
+      //   },
+      // }),
       ...(matchedRule?.group
         ? {
-            remove_from_group: tool({
-              description: "Remove a group item ",
+            remove_pattern: tool({
+              description: "Remove a pattern",
               parameters: z.object({
                 type: z
                   .enum(["from", "subject"])
-                  .describe("The type of the group item to remove"),
+                  .describe("The type of the pattern to remove"),
                 value: z
                   .string()
-                  .describe("The value of the group item to remove"),
+                  .describe("The value of the pattern to remove"),
               }),
               execute: async ({ type, value }) => {
-                logger.info("Remove From Group", { type, value });
+                logger.info("Remove Pattern", { type, value });
+                trackToolCall("remove_pattern", user.email);
 
-                const groupItemType = getGroupItemType(type);
+                const groupItemType = getPatternType(type);
 
                 if (!groupItemType) {
-                  logger.error("Invalid group item type", { type });
-                  return { error: "Invalid group item type" };
+                  logger.error("Invalid pattern type", {
+                    ...loggerOptions,
+                    type,
+                    value,
+                  });
+                  return { error: "Invalid pattern type" };
                 }
 
                 const groupItem = matchedRule?.group?.items?.find(
@@ -318,14 +342,33 @@ ${senderCategory || "No category"}
                 );
 
                 if (!groupItem) {
-                  logger.error("Group item not found", { type, value });
-                  return { error: "Group item not found" };
+                  logger.error("Pattern not found", {
+                    ...loggerOptions,
+                    type,
+                    value,
+                  });
+                  return { error: "Pattern not found" };
                 }
 
-                await deleteGroupItem({
-                  id: groupItem.id,
-                  userId: user.id,
-                });
+                try {
+                  await deleteGroupItem({ id: groupItem.id, userId: user.id });
+                } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+
+                  logger.error("Error while deleting pattern", {
+                    ...loggerOptions,
+                    groupItemId: groupItem.id,
+                    type: groupItemType,
+                    value,
+                    error: message,
+                  });
+
+                  return {
+                    error: "Failed to delete pattern",
+                    message,
+                  };
+                }
 
                 return { success: true };
               },
@@ -334,7 +377,12 @@ ${senderCategory || "No category"}
         : {}),
       ...(categories
         ? {
-            update_sender_category: getUpdateCategoryTool(user.id, categories),
+            update_sender_category: getUpdateCategoryTool(
+              user.id,
+              categories,
+              loggerOptions,
+              user.email,
+            ),
             add_categories: tool({
               description: "Add categories to a rule",
               parameters: z.object({
@@ -348,13 +396,18 @@ ${senderCategory || "No category"}
               execute: async (options) => {
                 try {
                   logger.info("Add Rule Categories", options);
+                  trackToolCall("add_categories", user.email);
 
                   const { ruleName } = options;
 
                   const rule = rules.find((r) => r.name === ruleName);
 
                   if (!rule) {
-                    logger.error("Rule not found", { ruleName });
+                    logger.error("Rule not found", {
+                      ...loggerOptions,
+                      ...options,
+                      ruleName,
+                    });
                     return { error: "Rule not found" };
                   }
 
@@ -372,10 +425,18 @@ ${senderCategory || "No category"}
 
                   return { success: true };
                 } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+
+                  logger.error("Error while adding categories to rule", {
+                    ...loggerOptions,
+                    ...options,
+                    error: message,
+                  });
+
                   return {
                     error: "Failed to add categories to rule",
-                    message:
-                      error instanceof Error ? error.message : String(error),
+                    message,
                   };
                 }
               },
@@ -393,13 +454,18 @@ ${senderCategory || "No category"}
               execute: async (options) => {
                 try {
                   logger.info("Remove Rule Categories", options);
+                  trackToolCall("remove_categories", user.email);
 
                   const { ruleName } = options;
 
                   const rule = rules.find((r) => r.name === ruleName);
 
                   if (!rule) {
-                    logger.error("Rule not found", { ruleName });
+                    logger.error("Rule not found", {
+                      ...loggerOptions,
+                      ...options,
+                      ruleName,
+                    });
                     return { error: "Rule not found" };
                   }
 
@@ -417,16 +483,84 @@ ${senderCategory || "No category"}
 
                   return { success: true };
                 } catch (error) {
+                  const message =
+                    error instanceof Error ? error.message : String(error);
+
+                  logger.error("Error while removing categories from rule", {
+                    ...loggerOptions,
+                    ...options,
+                    error: message,
+                  });
+
                   return {
                     error: "Failed to remove categories from rule",
-                    message:
-                      error instanceof Error ? error.message : String(error),
+                    message,
                   };
                 }
               },
             }),
           }
         : {}),
+      create_rule: tool({
+        description: "Create a new rule",
+        parameters: categories
+          ? getCreateRuleSchemaWithCategories(
+              categories.map((c) => c.name) as [string, ...string[]],
+            )
+          : createRuleSchema,
+        execute: async ({ name, condition, actions }) => {
+          logger.info("Create Rule", { name, condition, actions });
+          trackToolCall("create_rule", user.email);
+
+          const conditions =
+            condition as CreateRuleSchemaWithCategories["condition"];
+
+          try {
+            const rule = await safeCreateRule(
+              { name, condition, actions },
+              user.id,
+              conditions.categories?.categoryFilters || [],
+            );
+
+            if ("error" in rule) {
+              logger.error("Error while creating rule", {
+                ...loggerOptions,
+                error: rule.error,
+              });
+
+              return {
+                error: "Failed to create rule",
+                message: rule.error,
+              };
+            }
+
+            createdRules.set(rule.id, rule);
+
+            return { success: true };
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+
+            logger.error("Failed to create rule", {
+              ...loggerOptions,
+              error: message,
+            });
+
+            return {
+              error: "Failed to create rule",
+              message,
+            };
+          }
+        },
+      }),
+      list_rules: tool({
+        description: "List all existing rules for the user",
+        parameters: z.object({}),
+        execute: async () => {
+          trackToolCall("list_rules", user.email);
+          return userRules;
+        },
+      }),
       reply: tool({
         description: "Send an email reply to the user",
         parameters: z.object({
@@ -456,12 +590,25 @@ ${senderCategory || "No category"}
     await updatePromptFileOnRuleUpdated(user.id, rule, rule);
   }
 
+  posthogCaptureEvent(user.email, "AI Assistant Process Completed", {
+    toolCallCount: result.steps.length,
+    rulesCreated: createdRules.size,
+    rulesUpdated: updatedRules.size,
+  });
+
   return result;
 }
 
 const getUpdateCategoryTool = (
   userId: string,
   categories: Pick<Category, "id" | "name">[],
+  loggerOptions: {
+    userId: string;
+    email: string | null;
+    messageId?: string | null;
+    threadId?: string | null;
+  },
+  userEmail: string,
 ) =>
   tool({
     description: "Update the category of a sender",
@@ -476,6 +623,7 @@ const getUpdateCategoryTool = (
     }),
     execute: async ({ sender, category }) => {
       logger.info("Update Category", { sender, category });
+      trackToolCall("update_sender_category", userEmail);
 
       const existingSender = await findSenderByEmail({
         userId,
@@ -485,16 +633,34 @@ const getUpdateCategoryTool = (
       const cat = categories.find((c) => c.name === category);
 
       if (!cat) {
-        logger.error("Category not found", { category });
+        logger.error("Category not found", {
+          ...loggerOptions,
+          category,
+        });
         return { error: "Category not found" };
       }
 
-      await updateCategoryForSender({
-        userId,
-        sender: existingSender?.email || sender,
-        categoryId: cat.id,
-      });
-      return { success: true };
+      try {
+        await updateCategoryForSender({
+          userId,
+          sender: existingSender?.email || sender,
+          categoryId: cat.id,
+        });
+        return { success: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        logger.error("Error while updating category for sender", {
+          ...loggerOptions,
+          sender,
+          category,
+          error: message,
+        });
+        return {
+          error: "Failed to update category for sender",
+          message,
+        };
+      }
     },
   });
 
@@ -515,28 +681,6 @@ function ruleToXML(rule: RuleWithRelations) {
         : ""
     }
     ${
-      rule.group
-        ? `<group_condition>
-      <group>${rule.group.name}</group>
-      <group_items>
-        ${
-          rule.group.items
-            ? rule.group.items
-                .map(
-                  (item) =>
-                    `<item>
-  <type>${item.type}</type>
-  <value>${item.value}</value>
-</item>`,
-                )
-                .join("\n      ")
-            : "No group items"
-        }
-      </group_items>
-    </group_condition>`
-        : ""
-    }
-    ${
       hasCategoryConditions(rule)
         ? `<category_conditions>
       ${rule.categoryFilterType ? `<filter_type>${rule.categoryFilterType}</filter_type>` : ""}
@@ -545,6 +689,22 @@ function ruleToXML(rule: RuleWithRelations) {
         : ""
     }
   </conditions>
+
+  ${
+    rule.group?.items?.length
+      ? `<patterns>
+      ${rule.group.items
+        .map(
+          (item) =>
+            `<pattern>
+<type>${item.type}</type>
+<value>${item.value}</value>
+</pattern>`,
+        )
+        .join("\n      ")}
+  </patterns>`
+      : ""
+  }
 </rule>`;
 }
 
@@ -562,7 +722,11 @@ function hasCategoryConditions(rule: RuleWithRelations) {
   return Boolean(rule.categoryFilters && rule.categoryFilters.length > 0);
 }
 
-function getGroupItemType(type: string) {
+function getPatternType(type: string) {
   if (type === "from") return GroupItemType.FROM;
   if (type === "subject") return GroupItemType.SUBJECT;
+}
+
+async function trackToolCall(tool: string, userEmail: string) {
+  return posthogCaptureEvent(userEmail, "AI Assistant Tool Call", { tool });
 }

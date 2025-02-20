@@ -91,13 +91,28 @@ export const getAuthOptions: (options?: {
 
         return token;
       }
+
+      // logger.info("JWT callback - current token state", {
+      //   email: token.email,
+      //   currentExpiresAt: token.expires_at
+      //     ? new Date((token.expires_at as number) * 1000).toISOString()
+      //     : "not set",
+      // });
+
       if (
         token.expires_at &&
         Date.now() < (token.expires_at as number) * 1000
       ) {
-        // If the access token has not expired yet, return it
+        // // If the access token has not expired yet, return it
+        // logger.info("Token still valid", {
+        //   email: token.email,
+        //   expiresIn:
+        //     ((token.expires_at as number) * 1000 - Date.now()) / 1000 / 60,
+        //   minutes: true,
+        // });
         return token;
       }
+
       // If the access token has expired, try to refresh it
       logger.info("Token expired at", {
         email: token.email,
@@ -137,17 +152,25 @@ export const getAuthOptions: (options?: {
   events: {
     signIn: async ({ isNewUser, user }) => {
       if (isNewUser && user.email) {
-        try {
-          await Promise.allSettled([
-            createLoopsContact(user.email, user.name?.split(" ")?.[0]),
-            createResendContact({ email: user.email }),
-          ]);
-        } catch (error) {
-          logger.error("Error creating contacts", {
+        const [loopsResult, resendResult] = await Promise.allSettled([
+          createLoopsContact(user.email, user.name?.split(" ")?.[0]),
+          createResendContact({ email: user.email }),
+        ]);
+
+        if (loopsResult.status === "rejected") {
+          logger.error("Error creating Loops contact", {
             email: user.email,
-            error,
+            error: loopsResult.reason,
           });
-          captureException(error, undefined, user.email);
+          captureException(loopsResult.reason, undefined, user.email);
+        }
+
+        if (resendResult.status === "rejected") {
+          logger.error("Error creating Resend contact", {
+            email: user.email,
+            error: resendResult.reason,
+          });
+          captureException(resendResult.reason, undefined, user.email);
         }
       }
 

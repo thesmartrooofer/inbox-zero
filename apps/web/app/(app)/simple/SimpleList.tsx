@@ -43,8 +43,8 @@ import {
   isMarketingEmail,
   removeReplyFromTextPlain,
 } from "@/utils/parse/parseHtml.client";
-import { HtmlEmail } from "@/components/email-list/EmailPanel";
 import { ViewMoreButton } from "@/app/(app)/simple/ViewMoreButton";
+import { HtmlEmail } from "@/components/email-list/EmailContents";
 
 export function SimpleList(props: {
   messages: ParsedMessage[];
@@ -239,7 +239,7 @@ function SimpleListRow({
   );
 
   return (
-    <div className="bg-white p-4 shadow sm:rounded-lg">
+    <div className="bg-background p-4 shadow sm:rounded-lg">
       <div className="sm:flex sm:items-center sm:gap-4">
         <div className="w-full">
           <div className="flex">
@@ -250,7 +250,7 @@ function SimpleListRow({
             {expanded && <span className="ml-auto">{actionButtons}</span>}
           </div>
 
-          <div className="mt-2 whitespace-pre-wrap text-sm text-gray-700">
+          <div className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
             {expanded && !!message.textHtml ? (
               <HtmlEmail html={message.textHtml} />
             ) : (
@@ -281,10 +281,6 @@ function SimpleListRow({
               </Link>
             </Button>
           )}
-
-          {/* <div className="mt-2 text-sm text-gray-500">
-          {new Date(message.headers.date).toLocaleString()}
-        </div> */}
         </div>
 
         {!expanded && <div className="mt-2 sm:mt-0">{actionButtons}</div>}

@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://www.getinboxzero.com">
-    <h1 align="center">Inbox Zero - Your AI Personal Assistant for Email</h1>
+    <h1 align="center">Inbox Zero - Your AI Email Assistant</h1>
   </a>
   <p align="center">
     Open source email app to reach inbox zero fast.
@@ -17,17 +17,31 @@
 
 ## About
 
-Inbox Zero is the open-source AI personal assistant for people who want to spend less time on email.
+There are two parts to Inbox Zero:
+
+1. An AI email assistant that helps you spend less time on email.
+2. Open source AI email client.
+
+If you're looking to contribue to the project, the email client is the best place to do this.
 
 ## Features
 
 - **AI Personal Assistant:** Manages your email for you based on a plain text prompt file. It can take any action a human assistant can take on your behalf (Draft reply, Label, Archive, Reply, Forward, Mark Spam, and even call a webhook).
+- **Reply Zero:** Track emails that need your reply and those awaiting responses.
 - **Smart Categories:** Categorize everyone that's ever emailed you.
 - **Bulk Unsubscriber:** Quickly unsubscribe from emails you never read in one-click.
 - **Cold Email Blocker:** Automatically block cold emails.
 - **Email Analytics:** Track your email activity with daily, weekly, and monthly stats.
 
 Learn more in our [docs](https://docs.getinboxzero.com).
+
+## Feature Screenshots
+
+| ![AI Assistant](.github/screenshots/email-assistant.png) |        ![Reply Zero](.github/screenshots/reply-zero.png)        |
+| :------------------------------------------------------: | :-------------------------------------------------------------: |
+|                      _AI Assistant_                      |                          _Reply Zero_                           |
+|  ![Gmail Client](.github/screenshots/email-client.png)   | ![Bulk Unsubscriber](.github/screenshots/bulk-unsubscriber.png) |
+|                      _Gmail client_                      |                       _Bulk Unsubscriber_                       |
 
 ## Demo Video
 
@@ -70,13 +84,24 @@ Join our [Discord](https://www.getinboxzero.com/discord) to discuss tasks and ch
 
 The external services that are required are:
 
-- [OpenAI](https://platform.openai.com/api-keys)
 - [Google OAuth](https://console.cloud.google.com/apis/credentials)
 - [Google PubSub](https://console.cloud.google.com/cloudpubsub/topic/list) - see set up instructions below
-- [Upstash Redis](https://upstash.com/) - you can also use regular Redis with the Docker Compose.
-- [Tinybird](https://www.tinybird.co/) - you can run the app without this but some features then will be disabled.
+
+You also need to set an LLM, but you can use a local one too:
+
+- [Anthropic](https://console.anthropic.com/settings/keys)
+- [OpenAI](https://platform.openai.com/api-keys)
+- AWS Bedrock Anthropic
+- Google Gemini
+- Groq Llama 3.3 70B
+- Ollama (local)
+
+To enable Bulk Unsubscriber, Analytics and Smart Categories you will also need to set:
+
+- [Tinybird](https://www.tinybird.co/)
 
 We use Postgres for the database.
+For Redis, you can use [Upstash Redis](https://upstash.com/) or set up your own Redis instance.
 
 You can run Postgres & Redis locally using `docker-compose`
 
@@ -99,10 +124,11 @@ The required environment variables:
 - `NEXTAUTH_SECRET` -- can be any random string (try using `openssl rand -hex 32` for a quick secure random string)
 - `GOOGLE_CLIENT_ID` -- Google OAuth client ID. More info [here](https://next-auth.js.org/providers/google)
 - `GOOGLE_CLIENT_SECRET` -- Google OAuth client secret. More info [here](https://next-auth.js.org/providers/google)
-- `OPENAI_API_KEY` -- OpenAI API key.
 - `UPSTASH_REDIS_URL` -- Redis URL from Upstash. (can be empty if you are using Docker Compose)
 - `UPSTASH_REDIS_TOKEN` -- Redis token from Upstash. (or specify your own random string if you are using Docker Compose)
-- `TINYBIRD_TOKEN` -- Admin token for your Tinybird workspace (be sure to create an instance in the GCP `us-east4` region. This can also be changed via your `.env` if you prefer a different region). You can also decide to disabled Tinybird and then the analytics and bulk unsubscribe features will be disabled. Set `NEXT_PUBLIC_DISABLE_TINYBIRD=true` if you decide to disable Tinybird.
+- `TINYBIRD_TOKEN` -- (optional) Admin token for your Tinybird workspace (be sure to create an instance in the GCP `us-east4` region. This can also be changed via your `.env` if you prefer a different region). You can also decide to disabled Tinybird and then the analytics and bulk unsubscribe features will be disabled. Set `NEXT_PUBLIC_DISABLE_TINYBIRD=true` if you decide to disable Tinybird.
+
+When using Vercel with Fluid Compute turned off, you should set `MAX_DURATION=300` or lower. See Vercel limits for different plans [here](https://vercel.com/docs/functions/configuring-functions/duration#duration-limits).
 
 To run the migrations:
 
@@ -178,3 +204,23 @@ ngrok http --domain=XYZ.ngrok-free.app 3000
 And then update the webhook endpoint in the [Google PubSub subscriptions dashboard](https://console.cloud.google.com/cloudpubsub/subscription/list).
 
 To start watching emails visit: `/api/google/watch/all`
+
+### Watching for email updates
+
+Set a cron job to run these:
+The Google watch is necessary. The Resend one is optional.
+
+```json
+  "crons": [
+    {
+      "path": "/api/google/watch/all",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/resend/summary/all",
+      "schedule": "0 16 * * 1"
+    }
+  ]
+```
+
+[Here](https://vercel.com/guides/how-to-setup-cron-jobs-on-vercel#alternative-cron-providers) are some easy ways to run cron jobs. Upstash is a free, easy option. I could never get the Vercel `vercel.json`. Open to PRs if you find a fix for that.

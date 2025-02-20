@@ -33,11 +33,6 @@ export function createPromptFromRule(rule: RuleWithRelations): string {
     conditions.push(`with subject containing "${rule.subject}"`);
   if (rule.body) conditions.push(`with body containing "${rule.body}"`);
 
-  // Add group if present
-  if (rule.group?.name) {
-    conditions.push(`in group "${rule.group.name}"`);
-  }
-
   // Add category filters if present
   if (rule.categoryFilters?.length) {
     const categories = rule.categoryFilters.map((c) => c.name).join(", ");
@@ -85,6 +80,9 @@ export function createPromptFromRule(rule: RuleWithRelations): string {
         break;
       case ActionType.CALL_WEBHOOK:
         if (action.url) actions.push(`call webhook at ${action.url}`);
+        break;
+      case ActionType.MARK_READ:
+        actions.push("mark as read");
         break;
       default:
         console.warn(`Unknown action type: ${action.type}`);

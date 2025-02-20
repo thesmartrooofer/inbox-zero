@@ -50,6 +50,9 @@ export const env = createEnv({
     INTERNAL_API_KEY: z.string().optional(),
     WHITELIST_FROM: z.string().optional(),
     USE_BACKUP_MODEL: z.coerce.boolean().optional().default(false),
+    // See Vercel limits here: https://vercel.com/docs/functions/configuring-functions/duration#duration-limits
+    // Vercel Fluid Compute allows up to 800s, but other plans are capped at 300s or less
+    MAX_DURATION: z.coerce.number().optional().default(800),
 
     // license
     LICENSE_1_SEAT_VARIANT_ID: z.coerce.number().optional(),
@@ -117,6 +120,7 @@ export const env = createEnv({
       .string()
       .default("us.anthropic.claude-3-5-haiku-20241022-v1:0"),
     NEXT_PUBLIC_OLLAMA_MODEL: z.string().optional(),
+    NEXT_PUBLIC_APP_HOME_PATH: z.string().default("/automation"),
   },
   // For Next.js >= 13.4.4, you only need to destructure client variables:
   experimental__runtimeEnv: {
@@ -188,5 +192,6 @@ export const env = createEnv({
     NEXT_PUBLIC_BEDROCK_ANTHROPIC_BACKUP_MODEL:
       process.env.NEXT_PUBLIC_BEDROCK_ANTHROPIC_BACKUP_MODEL,
     NEXT_PUBLIC_OLLAMA_MODEL: process.env.NEXT_PUBLIC_OLLAMA_MODEL,
+    NEXT_PUBLIC_APP_HOME_PATH: process.env.NEXT_PUBLIC_APP_HOME_PATH,
   },
 });
